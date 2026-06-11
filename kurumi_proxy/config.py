@@ -17,6 +17,25 @@ class Settings(BaseSettings):
         alias="KURUMI_PROXY_MAX_OUTPUT_TOKENS",
         gt=0,
     )
+    kurumi_proxy_db_path: str = Field(
+        default="runtime/kurumi_proxy.sqlite3",
+        alias="KURUMI_PROXY_DB_PATH",
+    )
+    kurumi_proxy_routing_strategy: str = Field(
+        default="fill-first",
+        alias="KURUMI_PROXY_ROUTING_STRATEGY",
+        pattern="^(fill-first|round-robin)$",
+    )
+    kurumi_proxy_sticky_round_robin_limit: int = Field(
+        default=3,
+        alias="KURUMI_PROXY_STICKY_ROUND_ROBIN_LIMIT",
+        ge=1,
+    )
+    kurumi_proxy_rtk_enabled: bool = Field(default=True, alias="KURUMI_PROXY_RTK_ENABLED")
+    kurumi_proxy_rtk_min_bytes: int = Field(default=2000, alias="KURUMI_PROXY_RTK_MIN_BYTES", ge=1)
+    kurumi_proxy_rtk_max_bytes: int = Field(default=200000, alias="KURUMI_PROXY_RTK_MAX_BYTES", ge=1)
+    kurumi_proxy_rtk_head_lines: int = Field(default=120, alias="KURUMI_PROXY_RTK_HEAD_LINES", ge=1)
+    kurumi_proxy_rtk_tail_lines: int = Field(default=80, alias="KURUMI_PROXY_RTK_TAIL_LINES", ge=1)
 
 
 @lru_cache

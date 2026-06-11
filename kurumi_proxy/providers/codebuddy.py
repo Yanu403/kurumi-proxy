@@ -112,14 +112,21 @@ class CodeBuddyProvider:
             "text",
         ]
 
-    async def complete(self, messages: Sequence[ChatMessage], model: str | None = None) -> ProviderResult:
-        if not self.settings.codebuddy_api_key:
+    async def complete(
+        self,
+        messages: Sequence[ChatMessage],
+        model: str | None = None,
+        *,
+        api_key: str | None = None,
+    ) -> ProviderResult:
+        upstream_api_key = api_key or self.settings.codebuddy_api_key
+        if not upstream_api_key:
             raise MissingCredentialError("CODEBUDDY_API_KEY is required for upstream CodeBuddy calls.")
 
         selected_model = model or self.settings.codebuddy_model
         prompt = build_prompt(messages)
         env = os.environ.copy()
-        env["CODEBUDDY_API_KEY"] = self.settings.codebuddy_api_key
+        env["CODEBUDDY_API_KEY"] = upstream_api_key
 
         try:
             process = await asyncio.create_subprocess_exec(

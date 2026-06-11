@@ -58,7 +58,7 @@ async def test_provider_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     provider = CodeBuddyProvider(Settings(CODEBUDDY_API_KEY="secret"))
 
-    result = await provider.complete([ChatMessage(role="user", content="hello")], "gpt-5.5")
+    result = await provider.complete([ChatMessage(role="user", content="hello")], "gpt-5.5", api_key="call-secret")
 
     assert result.text == "ok"
     assert result.model == "gpt-5.5"
@@ -68,7 +68,7 @@ async def test_provider_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "hello" not in args
     assert calls["stdin"] == asyncio.subprocess.PIPE
     assert calls["input"] == b"Conversation:\nUser: hello\n\nUser:\nhello"
-    assert calls["env"]["CODEBUDDY_API_KEY"] == "secret"  # type: ignore[index]
+    assert calls["env"]["CODEBUDDY_API_KEY"] == "call-secret"  # type: ignore[index]
 
 
 @pytest.mark.asyncio

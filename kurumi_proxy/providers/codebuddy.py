@@ -108,7 +108,8 @@ class CodeBuddyProvider:
             model,
             "--output-format",
             "text",
-            prompt,
+            "--input-format",
+            "text",
         ]
 
     async def complete(self, messages: Sequence[ChatMessage], model: str | None = None) -> ProviderResult:
@@ -123,6 +124,7 @@ class CodeBuddyProvider:
         try:
             process = await asyncio.create_subprocess_exec(
                 *self.command(prompt, selected_model),
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -131,10 +133,12 @@ class CodeBuddyProvider:
             raise ProviderUnavailableError(
                 f"CodeBuddy command not found: {self.settings.codebuddy_bin}"
             ) from exc
+        except OSError as exc:
+            raise ProviderBadGatewayError("CodeBuddy command could not be started.") from exc
 
         try:
             stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
+                process.communicate(input=prompt.encode("utf-8")),
                 timeout=self.settings.codebuddy_timeout_seconds,
             )
         except TimeoutError as exc:

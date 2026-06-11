@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -72,15 +74,26 @@ async def test_chat_completion_openai_shape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_streaming_returns_501() -> None:
+async def test_streaming_chat_completion_openai_sse_shape() -> None:
     async with client() as ac:
         response = await ac.post(
             "/v1/chat/completions",
-            json={"stream": True, "messages": [{"role": "user", "content": "hello"}]},
+            json={"stream": True, "model": "gpt-5.5", "messages": [{"role": "user", "content": "hello"}]},
         )
 
-    assert response.status_code == 501
-    assert response.json()["error"]["type"] == "not_implemented"
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+    events = [line.removeprefix("data: ") for line in response.text.splitlines() if line.startswith("data: ")]
+    assert events[-1] == "[DONE]"
+
+    chunks = [json.loads(event) for event in events[:-1]]
+    assert [chunk["object"] for chunk in chunks] == ["chat.completion.chunk"] * 3
+    assert {chunk["id"] for chunk in chunks} == {chunks[0]["id"]}
+    assert {chunk["model"] for chunk in chunks} == {"gpt-5.5"}
+    assert chunks[0]["choices"] == [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]
+    assert chunks[1]["choices"] == [{"index": 0, "delta": {"content": "mocked response"}, "finish_reason": None}]
+    assert chunks[2]["choices"] == [{"index": 0, "delta": {}, "finish_reason": "stop"}]
 
 
 @pytest.mark.asyncio

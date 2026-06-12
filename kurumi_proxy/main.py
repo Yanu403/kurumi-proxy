@@ -219,6 +219,22 @@ def _rtk_kwargs(stats: RtkStats) -> dict[str, int | None]:
     }
 
 
+def reject_unsupported_tool_calls(request: ChatCompletionRequest) -> None:
+    if not request.tools:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": {
+                "message": "Kurumi Proxy is text-only and does not support tool_calls yet. Remove tools/tool_choice and send a text-only chat completion request.",
+                "type": "invalid_request_error",
+                "param": "tools",
+                "code": "unsupported_tool_calls",
+            }
+        },
+    )
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -331,6 +347,8 @@ async def chat_completions(
     provider_factory: ProviderFactory = Depends(get_provider_factory),
     store: ConnectionStore = Depends(get_connection_store),
 ) -> ChatCompletionResponse | StreamingResponse:
+    reject_unsupported_tool_calls(request)
+
     provider = provider_factory(settings)
     selected_model = request.model or settings.codebuddy_model
     processed_messages, rtk_stats = preprocess_messages(request.messages, settings)

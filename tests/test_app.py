@@ -81,6 +81,70 @@ async def test_chat_completion_openai_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_completion_rejects_tool_calls_before_provider() -> None:
+    class CountingProvider:
+        calls = 0
+
+        def __init__(self, settings: Settings):
+            self.settings = settings
+
+        async def complete(self, messages: object, model: str | None = None) -> ProviderResult:
+            CountingProvider.calls += 1
+            return ProviderResult(text="should not be called", model=model or "default-model")
+
+    app.state.provider_factory = CountingProvider
+
+    async with client() as ac:
+        response = await ac.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.5",
+                "messages": [{"role": "user", "content": "Use a tool."}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_status",
+                            "description": "Get repository status.",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                "tool_choice": "auto",
+            },
+        )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body == {
+        "error": {
+            "message": "Kurumi Proxy is text-only and does not support tool_calls yet. Remove tools/tool_choice and send a text-only chat completion request.",
+            "type": "invalid_request_error",
+            "param": "tools",
+            "code": "unsupported_tool_calls",
+        }
+    }
+    assert CountingProvider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_allows_empty_tools_array() -> None:
+    async with client() as ac:
+        response = await ac.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-5.5",
+                "messages": [{"role": "user", "content": "hello"}],
+                "tools": [],
+                "tool_choice": "none",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "mocked response"
+
+
+@pytest.mark.asyncio
 async def test_streaming_chat_completion_openai_sse_shape() -> None:
     async with client() as ac:
         response = await ac.post(

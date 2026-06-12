@@ -11,6 +11,7 @@ Standalone local OpenAI-compatible proxy for CodeBuddy CLI.
 - Async subprocess wrapper around `codebuddy`
 - OpenAI-style non-streaming chat completion response
 - OpenAI-style streaming response compatibility
+- Safe fail-fast rejection for tool-calling requests (`tools` are not supported yet)
 - Multi-key CodeBuddy credential routing with fallback on quota/rate-limit/auth errors
 - Local SQLite usage/quota tracker by model and connection
 - RTK-lite compression for large tool/tool_result payloads
@@ -82,6 +83,8 @@ curl http://127.0.0.1:8785/v1/chat/completions \
   }'
 ```
 
+Tool calling is not implemented yet. Because the CodeBuddy invocation below is text-only and cannot return OpenAI `tool_calls`, `POST /v1/chat/completions` returns an OpenAI-style `400 invalid_request_error` when the request contains a non-empty `tools` array. Send text-only requests, or remove `tools`/`tool_choice`, until tool-call support is added.
+
 If `KURUMI_PROXY_API_KEY` is set, include it on `/v1/*` requests:
 
 ```bash
@@ -126,10 +129,12 @@ codebuddy -p --tools "" --model <model> --output-format text --input-format text
 
 The prompt is sent through stdin, not argv. This avoids Linux argument-length failures on long prompts. `CODEBUDDY_API_KEY` is passed through to the subprocess environment from the selected connection. Secrets are not logged and stderr returned in API errors is redacted.
 
+Because `--tools ""` disables CodeBuddy tool execution, Kurumi Proxy currently rejects non-empty OpenAI `tools` requests instead of forwarding them and risking fabricated tool-use text.
+
 ## Tests
 
 ```bash
-pytest -q
+.venv/bin/python -m pytest -q
 ```
 
 Tests mock provider behavior and do not call the real CodeBuddy API.

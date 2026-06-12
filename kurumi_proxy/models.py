@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,8 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = Field(default=None, gt=0)
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any | None = None
 
 
 class CompletionMessage(BaseModel):

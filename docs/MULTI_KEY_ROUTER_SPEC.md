@@ -157,6 +157,8 @@ codebuddy -p --tools "" --model <model> --output-format text --input-format text
 
 and pass prompt through stdin.
 
+This invocation is text-only and cannot produce OpenAI-compatible `tool_calls`. Until real tool-call support is implemented, `/v1/chat/completions` must reject requests that contain a non-empty `tools` array with an OpenAI-style `400 invalid_request_error` instead of silently discarding the fields.
+
 Never log full API keys or prompts.
 
 ### 5. Usage / quota tracker endpoints

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     codebuddy_api_key: str | None = Field(default=None, alias="CODEBUDDY_API_KEY")
     codebuddy_bin: str = Field(default="codebuddy", alias="CODEBUDDY_BIN")
     codebuddy_model: str = Field(default="default-model", alias="CODEBUDDY_MODEL")
+    kurumi_proxy_backend: str = Field(default="acp", alias="KURUMI_PROXY_BACKEND", pattern="^(acp|subprocess)$")
+    codebuddy_daemon_port: int = Field(default=6275, alias="CODEBUDDY_DAEMON_PORT", ge=1024, le=65535)
     codebuddy_timeout_seconds: float = Field(default=180, alias="CODEBUDDY_TIMEOUT_SECONDS", gt=0)
     kurumi_proxy_max_output_tokens: int = Field(
         default=8192,

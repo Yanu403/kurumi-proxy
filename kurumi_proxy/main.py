@@ -22,6 +22,23 @@ from kurumi_proxy.providers.base import ProviderError, ProviderResult
 from kurumi_proxy.providers.codebuddy import KNOWN_MODELS, CodeBuddyProvider
 from kurumi_proxy.router import CredentialRouter
 from kurumi_proxy.rtk import RtkStats, preprocess_messages
+from kurumi_proxy.providers.codebuddy_acp.daemon import AcpDaemon
+from kurumi_proxy.providers.codebuddy_acp.client import AcpClient
+from kurumi_proxy.providers.codebuddy_acp.session import AcpSession
+from kurumi_proxy.providers.codebuddy_acp.translator import translate_to_openai_stream, collect_openai_completion
+
+# Global ACP daemon instance (lazily initialized)
+_acp_daemon: AcpDaemon | None = None
+
+def get_acp_daemon(settings: Settings) -> AcpDaemon:
+    """Get or create the global ACP daemon."""
+    global _acp_daemon
+    if _acp_daemon is None:
+        _acp_daemon = AcpDaemon(
+            port=settings.codebuddy_daemon_port,
+            codebuddy_bin=settings.codebuddy_bin,
+        )
+    return _acp_daemon
 
 ProviderFactory = Callable[[Settings], CodeBuddyProvider]
 
@@ -219,7 +236,10 @@ def _rtk_kwargs(stats: RtkStats) -> dict[str, int | None]:
     }
 
 
-def reject_unsupported_tool_calls(request: ChatCompletionRequest) -> None:
+def reject_unsupported_tool_calls(request: ChatCompletionRequest, settings: Settings) -> None:
+    # Allow tools when using ACP backend
+    if settings.kurumi_proxy_backend == "acp":
+        return
     if not request.tools:
         return
     raise HTTPException(
@@ -336,9 +356,154 @@ async def admin_usage(days: int = 7, store: ConnectionStore = Depends(get_connec
 
 
 @app.get("/admin/quota", dependencies=[Depends(require_admin_auth)])
+
+@app.get("/admin/acp/status", dependencies=[Depends(require_admin_auth)])
+async def admin_acp_status(
+    settings: Settings = Depends(get_app_settings),
+) -> dict:
+    """Get ACP daemon status for monitoring."""
+    daemon = get_acp_daemon(settings)
+    status = daemon.get_status()
+    status["backend"] = settings.kurumi_proxy_backend
+    status["daemon_port"] = settings.codebuddy_daemon_port
+    return status
 async def admin_quota(store: ConnectionStore = Depends(get_connection_store)) -> dict[str, object]:
     return store.quota_summary()
 
+
+
+async def chat_completions_acp(
+    request: ChatCompletionRequest,
+    settings: Settings,
+    store: ConnectionStore,
+) -> ChatCompletionResponse | StreamingResponse:
+    """
+    Handle chat completions using ACP backend (persistent daemon).
+    
+    This function:
+    1. Ensures CodeBuddy daemon is running
+    2. Creates ACP client and session
+    3. Sends prompt and streams/collects responses
+    4. Translates ACP events to OpenAI format
+    5. Records usage
+    """
+    daemon = get_acp_daemon(settings)
+    selected_model = request.model or settings.codebuddy_model
+    
+    # Ensure daemon is running
+    try:
+        await daemon.ensure_running()
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": {"message": str(exc), "type": "daemon_error"}},
+        ) from exc
+    
+    # Preprocess messages (RTK if enabled)
+    processed_messages, rtk_stats = preprocess_messages(request.messages, settings)
+    
+    start = time.monotonic()
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
+    
+    try:
+        # Create ACP client and session
+        async with AcpClient(daemon.base_url) as client:
+            session = AcpSession(client)
+            
+            # Initialize protocol
+            await session.initialize()
+            
+            # Create session
+            await session.new_session(cwd="/tmp")
+            
+            # Submit prompt and get event stream
+            acp_events = session.prompt(processed_messages)
+            
+            if request.stream:
+                # Streaming response
+                async def stream_wrapper():
+                    try:
+                        async for chunk in translate_to_openai_stream(
+                            acp_events,
+                            model=selected_model,
+                            completion_id=completion_id,
+                            created=created,
+                        ):
+                            yield chunk
+                    except Exception as exc:
+                        logger.error(f"ACP streaming error: {exc}")
+                        error_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": selected_model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": f"\n[Error: {exc}]"},
+                                    "finish_reason": "stop"
+                                }
+                            ]
+                        }
+                        yield f"data: {json.dumps(error_chunk)}\n\n"
+                        yield "data: [DONE]\n\n"
+                
+                # Record usage (estimate for streaming)
+                prompt_text = " ".join(
+                    m.content if isinstance(m.content, str) else str(m.content)
+                    for m in processed_messages
+                )
+                usage = usage_from_text(prompt_text)
+                store.record_usage(
+                    model=selected_model,
+                    connection=None,
+                    endpoint="/v1/chat/completions",
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=0,  # Unknown for streaming
+                    total_tokens=usage.prompt_tokens,
+                    status="success",
+                    duration_ms=int((time.monotonic() - start) * 1000),
+                    **_rtk_kwargs(rtk_stats),
+                )
+                
+                return StreamingResponse(
+                    stream_wrapper(),
+                    media_type="text/event-stream",
+                )
+            else:
+                # Non-streaming response
+                response_data = await collect_openai_completion(
+                    acp_events,
+                    model=selected_model,
+                    completion_id=completion_id,
+                    created=created,
+                )
+                
+                # Record usage
+                usage = response_data.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+                store.record_usage(
+                    model=selected_model,
+                    connection=None,
+                    endpoint="/v1/chat/completions",
+                    prompt_tokens=usage["prompt_tokens"],
+                    completion_tokens=usage["completion_tokens"],
+                    total_tokens=usage["total_tokens"],
+                    status="success",
+                    duration_ms=int((time.monotonic() - start) * 1000),
+                    **_rtk_kwargs(rtk_stats),
+                )
+                
+                return response_data
+    
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"ACP request error: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail={"error": {"message": f"ACP backend error: {exc}", "type": "backend_error"}},
+        ) from exc
 
 @app.post("/v1/chat/completions", dependencies=[Depends(require_v1_auth)], response_model=None)
 async def chat_completions(
@@ -347,7 +512,10 @@ async def chat_completions(
     provider_factory: ProviderFactory = Depends(get_provider_factory),
     store: ConnectionStore = Depends(get_connection_store),
 ) -> ChatCompletionResponse | StreamingResponse:
-    reject_unsupported_tool_calls(request)
+    # Route to ACP backend if configured
+    if settings.kurumi_proxy_backend == "acp":
+        return await chat_completions_acp(request, settings, store)
+    reject_unsupported_tool_calls(request, settings)
 
     provider = provider_factory(settings)
     selected_model = request.model or settings.codebuddy_model

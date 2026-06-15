@@ -11,7 +11,7 @@ Standalone local OpenAI-compatible proxy for CodeBuddy CLI.
 - Async subprocess wrapper around `codebuddy`
 - OpenAI-style non-streaming chat completion response
 - OpenAI-style streaming response compatibility
-- Safe fail-fast rejection for tool-calling requests (`tools` are not supported yet)
+- Tool-calling support via ACP backend (requests with `tools` supported when `KURUMI_PROXY_BACKEND=acp`)
 - Multi-key CodeBuddy credential routing with fallback on quota/rate-limit/auth errors
 - Local SQLite usage/quota tracker by model and connection
 - RTK-lite compression for large tool/tool_result payloads
@@ -44,6 +44,8 @@ On first startup, if `CODEBUDDY_API_KEY` is set and the local credential databas
 - `CODEBUDDY_BIN`: CodeBuddy executable path or command name. Default: `codebuddy`.
 - `CODEBUDDY_MODEL`: default upstream model. Default: `default-model`.
 - `CODEBUDDY_TIMEOUT_SECONDS`: CLI timeout in seconds. Default: `180`.
+- `KURUMI_PROXY_BACKEND`: backend provider, `acp` (persistent daemon with tool-calls) or `subprocess` (text-only). Default: `acp`.
+- `CODEBUDDY_DAEMON_PORT`: port for ACP daemon when backend is `acp`. Default: `6275`.
 - `KURUMI_PROXY_MAX_OUTPUT_TOKENS`: default `max_tokens` value when omitted by clients. Default: `8192`.
 - `KURUMI_PROXY_DB_PATH`: local SQLite database for credentials and usage. Default: `runtime/kurumi_proxy.sqlite3`.
 - `KURUMI_PROXY_ROUTING_STRATEGY`: credential selection strategy, `fill-first` or `round-robin`. Default: `fill-first`.
@@ -54,6 +56,21 @@ On first startup, if `CODEBUDDY_API_KEY` is set and the local credential databas
 - `KURUMI_PROXY_RTK_HEAD_LINES`: head lines preserved when truncating large payloads. Default: `120`.
 - `KURUMI_PROXY_RTK_TAIL_LINES`: tail lines preserved when truncating large payloads. Default: `80`.
 
+
+## Tool-Call Support
+
+Kurumi-proxy supports OpenAI-compatible tool calls (`tools`, `tool_choice`) when using the **ACP backend** (default).
+
+- **ACP backend (`KURUMI_PROXY_BACKEND=acp`)**: Connects to a persistent `codebuddy --serve` daemon via HTTP/SSE. Supports streaming tool calls, reasoning content, and proper finish reasons. The daemon is managed automatically (start, health checks, restart on failure).
+
+- **Subprocess backend (`KURUMI_PROXY_BACKEND=subprocess`)**: Falls back to text-only mode using `codebuddy -p` subprocess calls. Rejects requests with `tools` (HTTP 400). Use this for compatibility or when daemon mode is unavailable.
+
+Check daemon status:
+```bash
+curl http://127.0.0.1:8785/admin/acp/status -H "Authorization: Bearer YOUR_ADMIN_KEY"
+```
+
+**Future work**: MCP (Model Context Protocol) integration through `--mcp-config` is planned but not yet implemented.
 ## Run
 
 ```bash

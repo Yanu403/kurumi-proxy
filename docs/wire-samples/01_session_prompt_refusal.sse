@@ -1,0 +1,35 @@
+:ok
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"session_info_update","_meta":{"codebuddy.ai/agentPhase":{"phase":"idle","startedAt":1781497204910}}},"_meta":{"codebuddy.ai/requestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/messageId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07-5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/messageRequestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1"}}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"session_info_update","_meta":{"codebuddy.ai/progress":null}},"_meta":{"codebuddy.ai/requestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/messageId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07-5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/messageRequestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1"}}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"session_info_update","_meta":{"codebuddy.ai/agentPhase":{"phase":"preparing","startedAt":1781497237984}}},"_meta":{"codebuddy.ai/requestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/messageId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07-5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/messageRequestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1"}}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"session_info_update","_meta":{"codebuddy.ai/agentPhase":{"phase":"preparing","startedAt":1781497238007}}},"_meta":{"codebuddy.ai/requestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/messageId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07-5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/messageRequestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1"}}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"session_info_update","_meta":{"codebuddy.ai/agentPhase":{"phase":"model_requesting","startedAt":1781497238168}}},"_meta":{"codebuddy.ai/requestId":"76bdf02efbe3442ba8ca4785b0710924","codebuddy.ai/messageId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07-5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/messageRequestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/traceId":"d5df56066b65032d2436bb356357fc58","codebuddy.ai/requestModelName":"Default"}}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"usage_update","used":0,"size":176000,"_meta":{"codebuddy.ai/requestId":"76bdf02efbe3442ba8ca4785b0710924","codebuddy.ai/messageId":"75e50e87740a4069b759f03d862a9003"}}}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"session_info_update","_meta":{"codebuddy.ai/agentPhase":{"phase":"idle","startedAt":1781497239155}}},"_meta":{"codebuddy.ai/requestId":"76bdf02efbe3442ba8ca4785b0710924","codebuddy.ai/messageId":"75e50e87740a4069b759f03d862a9003","codebuddy.ai/messageRequestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/traceId":"d5df56066b65032d2436bb356357fc58","codebuddy.ai/requestModelName":"Default"}}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"session_info_update","_meta":{"codebuddy.ai/agentPhase":{"phase":"preparing","startedAt":1781497239166}}},"_meta":{"codebuddy.ai/requestId":"76bdf02efbe3442ba8ca4785b0710924","codebuddy.ai/messageId":"75e50e87740a4069b759f03d862a9003","codebuddy.ai/messageRequestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/traceId":"d5df56066b65032d2436bb356357fc58","codebuddy.ai/requestModelName":"Default"}}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"session_info_update","_meta":{"codebuddy.ai/agentPhase":{"phase":"idle","startedAt":1781497239195}}},"_meta":{"codebuddy.ai/requestId":"76bdf02efbe3442ba8ca4785b0710924","codebuddy.ai/messageId":"75e50e87740a4069b759f03d862a9003","codebuddy.ai/messageRequestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","codebuddy.ai/traceId":"d5df56066b65032d2436bb356357fc58"}}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0416b826-0ca9-4899-86b4-89ebfe2c6f07","update":{"sessionUpdate":"session_info_update","title":"Reply with the single word PONG.","_meta":{"codebuddy.ai/requestId":"76bdf02efbe3442ba8ca4785b0710924","codebuddy.ai/messageId":"75e50e87740a4069b759f03d862a9003","codebuddy.ai/messageRequestId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1"}}}}
+
+event: message
+data: {"jsonrpc":"2.0","id":4,"result":{"stopReason":"refusal","userMessageId":"5ce2bc05-dd9a-4d7b-b2dc-bcbb864203c1","_meta":{"codebuddy.ai/requestId":"76bdf02efbe3442ba8ca4785b0710924","codebuddy.ai/traceId":"d5df56066b65032d2436bb356357fc58","codebuddy.ai/errorMessage":"{\"code\":-32000,\"message\":\"Authentication required\",\"data\":{\"details\":\"401 Authentication required. Please use /login command to sign in to your account (auth-type:cli-external-link,token-type:undefined,token-length:61)\\n\\nNote: Environment variable CODEBUDDY_API_KEY is set. If the key is invalid, unset it or set CODEBUDDY_API_KEY_DISABLED=1 to use /login instead. (target: https://www.codebuddy.ai) (d5df56066b65032d2436bb356357fc58/0416b826-0ca9-4899-86b4-89ebfe2c6f07)\",\"statusCode\":401,\"code\":401,\"category\":\"auth\"}}"}}}
+

@@ -23,12 +23,14 @@ from kurumi_proxy.providers.base import ProviderError, ProviderResult
 from kurumi_proxy.providers.codebuddy import KNOWN_MODELS, CodeBuddyProvider
 from kurumi_proxy.router import CredentialRouter
 from kurumi_proxy.rtk import RtkStats, preprocess_messages
-from kurumi_proxy.providers.codebuddy_acp.daemon import AcpDaemon
-from kurumi_proxy.providers.codebuddy_acp.client import AcpClient
-from kurumi_proxy.providers.codebuddy_acp.session import AcpSession
+from kurumi_proxy.providers.codebuddy_acp.daemon import AcpDaemon, AcpDaemonStartupError
+from kurumi_proxy.providers.codebuddy_acp.session import (
+    AcpSession,
+    AcpAuthenticationRequiredError,
+    AcpUpstreamRefusalError,
+)
 from kurumi_proxy.providers.codebuddy_acp.translator import (
     collect_openai_completion,
-    extract_upstream_error,
     translate_to_openai_stream,
 )
 
@@ -40,7 +42,6 @@ def get_acp_daemon(settings: Settings) -> AcpDaemon:
     global _acp_daemon
     if _acp_daemon is None:
         _acp_daemon = AcpDaemon(
-            port=settings.codebuddy_daemon_port,
             codebuddy_bin=settings.codebuddy_bin,
         )
     return _acp_daemon
@@ -48,7 +49,6 @@ def get_acp_daemon(settings: Settings) -> AcpDaemon:
 ProviderFactory = Callable[[Settings], CodeBuddyProvider]
 
 logger = logging.getLogger(__name__)
-
 app = FastAPI(title="kurumi-proxy", version="0.1.0")
 
 
@@ -390,147 +390,166 @@ async def chat_completions_acp(
     """
     Handle chat completions using ACP backend (persistent daemon).
     
-    This function:
-    1. Ensures CodeBuddy daemon is running
-    2. Creates ACP client and session
-    3. Sends prompt and streams/collects responses
-    4. Translates ACP events to OpenAI format
-    5. Records usage
+    Flow:
+    1. Acquire singleton daemon (start lazily on first request)
+    2. Open fresh ACP session (session/new)
+    3. Issue session/prompt with messages translated to prompt_blocks
+    4. Stream SSE events through translator
+    5. Handle errors: AcpUpstreamRefusalError → 502, AcpAuthenticationRequiredError → 503
     """
     daemon = get_acp_daemon(settings)
     selected_model = request.model or settings.codebuddy_model
     
-    # Ensure daemon is running
+    # Ensure daemon is running (lazy start)
     try:
-        await daemon.ensure_running()
-    except RuntimeError as exc:
+        await daemon.start()
+    except AcpDaemonStartupError as exc:
         raise HTTPException(
             status_code=502,
-            detail={"error": {"message": str(exc), "type": "daemon_error"}},
+            detail={"error": {"message": f"Daemon startup failed: {exc}", "type": "daemon_error"}},
         ) from exc
     
     # Preprocess messages (RTK if enabled)
     processed_messages, rtk_stats = preprocess_messages(request.messages, settings)
+    
+    # Build prompt_blocks from messages
+    prompt_blocks = []
+    for msg in processed_messages:
+        if msg.content is None:
+            continue
+        if isinstance(msg.content, str):
+            prompt_blocks.append({"type": "text", "text": msg.content})
+        else:
+            # List of content blocks - extract text
+            for block in msg.content:
+                if hasattr(block, "text"):
+                    prompt_blocks.append({"type": "text", "text": block.text})
     
     start = time.monotonic()
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     
     try:
-        # Create ACP client and session
-        async with AcpClient(daemon.base_url) as client:
-            session = AcpSession(client)
+        # Create ACP session
+        session = AcpSession(daemon.rpc_client)
+        session_id = await session.new(cwd="/tmp")
+        
+        # Submit prompt and get event stream
+        acp_events = session.prompt(session_id, prompt_blocks)
+        
+        if request.stream:
+            # Streaming response
+            async def stream_wrapper():
+                try:
+                    async for chunk in translate_to_openai_stream(
+                        acp_events,
+                        model=selected_model,
+                        completion_id=completion_id,
+                        created=created,
+                    ):
+                        yield chunk
+                except AcpUpstreamRefusalError as exc:
+                    # Surface upstream refusal in stream
+                    error_chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": selected_model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": f"\n[Upstream error: {exc.message}]"},
+                            "finish_reason": "stop"
+                        }]
+                    }
+                    yield f"data: {json.dumps(error_chunk)}\n\n"
+                    yield "data: [DONE]\n\n"
+                except Exception as exc:
+                    logger.error(f"ACP streaming error: {exc}")
+                    error_chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": selected_model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": f"\n[Error: {exc}]"},
+                            "finish_reason": "stop"
+                        }]
+                    }
+                    yield f"data: {json.dumps(error_chunk)}\n\n"
+                    yield "data: [DONE]\n\n"
+                finally:
+                    # Best-effort session cleanup
+                    await session.close(session_id)
             
-            # Initialize protocol
-            await session.initialize()
+            # Record usage (estimate for streaming)
+            prompt_text = " ".join(
+                m.content if isinstance(m.content, str) else str(m.content)
+                for m in processed_messages
+            )
+            usage = usage_from_text(prompt_text)
+            store.record_usage(
+                model=selected_model,
+                connection=None,
+                endpoint="/v1/chat/completions",
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=0,
+                total_tokens=usage.prompt_tokens,
+                status="success",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                **_rtk_kwargs(rtk_stats),
+            )
             
-            # Create session
-            await session.new_session(cwd="/tmp")
-            
-            # Submit prompt and get event stream
-            acp_events = session.prompt(processed_messages)
-            
-            if request.stream:
-                # Streaming response
-                async def stream_wrapper():
-                    try:
-                        async for chunk in translate_to_openai_stream(
-                            acp_events,
-                            model=selected_model,
-                            completion_id=completion_id,
-                            created=created,
-                        ):
-                            yield chunk
-                    except Exception as exc:
-                        logger.error(f"ACP streaming error: {exc}")
-                        error_chunk = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created,
-                            "model": selected_model,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {"content": f"\n[Error: {exc}]"},
-                                    "finish_reason": "stop"
-                                }
-                            ]
-                        }
-                        yield f"data: {json.dumps(error_chunk)}\n\n"
-                        yield "data: [DONE]\n\n"
-                
-                # Record usage (estimate for streaming)
-                prompt_text = " ".join(
-                    m.content if isinstance(m.content, str) else str(m.content)
-                    for m in processed_messages
-                )
-                usage = usage_from_text(prompt_text)
-                store.record_usage(
-                    model=selected_model,
-                    connection=None,
-                    endpoint="/v1/chat/completions",
-                    prompt_tokens=usage.prompt_tokens,
-                    completion_tokens=0,  # Unknown for streaming
-                    total_tokens=usage.prompt_tokens,
-                    status="success",
-                    duration_ms=int((time.monotonic() - start) * 1000),
-                    **_rtk_kwargs(rtk_stats),
-                )
-                
-                return StreamingResponse(
-                    stream_wrapper(),
-                    media_type="text/event-stream",
-                )
-            else:
-                # Non-streaming response
+            return StreamingResponse(
+                stream_wrapper(),
+                media_type="text/event-stream",
+            )
+        else:
+            # Non-streaming response
+            try:
                 response_data = await collect_openai_completion(
                     acp_events,
                     model=selected_model,
                     completion_id=completion_id,
                     created=created,
                 )
-
-                # Surface upstream daemon refusal as HTTP 502 instead of
-                # masking it as a successful empty completion.
-                upstream_error = response_data.pop("_upstream_error", None)
-                if upstream_error is not None:
-                    detail_data = upstream_error.get("data") or {}
-                    category = str(detail_data.get("category") or "unknown")
-                    message = str(upstream_error.get("message") or "CodeBuddy upstream refusal")
-                    if category == "auth":
-                        message = (
-                            "CodeBuddy upstream returned 401 — refresh CODEBUDDY_API_KEY "
-                            "or run `codebuddy /login`. Original message: " + message
-                        )
-                    raise HTTPException(
-                        status_code=502,
-                        detail={
-                            "error": {
-                                "message": message,
-                                "type": "upstream_error",
-                                "code": category,
-                            }
-                        },
-                    )
-                
-                # Record usage
-                usage = response_data.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
-                store.record_usage(
-                    model=selected_model,
-                    connection=None,
-                    endpoint="/v1/chat/completions",
-                    prompt_tokens=usage["prompt_tokens"],
-                    completion_tokens=usage["completion_tokens"],
-                    total_tokens=usage["total_tokens"],
-                    status="success",
-                    duration_ms=int((time.monotonic() - start) * 1000),
-                    **_rtk_kwargs(rtk_stats),
-                )
-                
-                return response_data
+            finally:
+                # Best-effort session cleanup
+                await session.close(session_id)
+            
+            # Record usage
+            usage = response_data.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+            store.record_usage(
+                model=selected_model,
+                connection=None,
+                endpoint="/v1/chat/completions",
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+                total_tokens=usage["total_tokens"],
+                status="success",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                **_rtk_kwargs(rtk_stats),
+            )
+            
+            return response_data
+    
+    except AcpAuthenticationRequiredError as exc:
+        # Daemon not authenticated - surface as 503
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": exc.args[0], "type": "authentication_required"}},
+        ) from exc
+    
+    except AcpUpstreamRefusalError as exc:
+        # Upstream refusal - surface as 502
+        raise HTTPException(
+            status_code=502,
+            detail={"error": {"message": exc.message, "type": "upstream_refusal"}},
+        ) from exc
     
     except HTTPException:
         raise
+    
     except Exception as exc:
         logger.error(f"ACP request error: {exc}")
         raise HTTPException(

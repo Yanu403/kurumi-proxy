@@ -1,14 +1,39 @@
 """
-Integration tests for ACP daemon lifecycle management.
+Unit tests for ACP daemon lifecycle management.
 
-Tests daemon startup, health checks, restart, and graceful shutdown.
+Tests daemon spawning, endpoint discovery, connect handshake, and shutdown.
 """
 
-import pytest
 import asyncio
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from kurumi_proxy.providers.codebuddy_acp.daemon import AcpDaemon, DaemonState
+from kurumi_proxy.providers.codebuddy_acp.daemon import (
+    AcpDaemon,
+    AcpDaemonStartupError,
+    ENDPOINT_REGEX,
+)
+
+
+def test_endpoint_regex():
+    """Test the endpoint discovery regex matches expected format."""
+    line = "ACP streamable-http endpoint: http://127.0.0.1:54321/api/v1/acp"
+    match = ENDPOINT_REGEX.search(line)
+    assert match is not None
+    assert match.group(1) == "http://127.0.0.1:54321/api/v1/acp"
+    
+    # Should not match other lines
+    line2 = "Some other output"
+    assert ENDPOINT_REGEX.search(line2) is None
+
+
+@pytest.fixture
+def daemon():
+    """Create daemon instance for testing."""
+    return AcpDaemon(
+        codebuddy_bin="codebuddy",
+        startup_timeout=5.0,
+    )
 
 
 @pytest.fixture
@@ -20,233 +45,129 @@ def mock_process():
     process.terminate = MagicMock()
     process.kill = MagicMock()
     process.wait = AsyncMock(return_value=0)
+    
+    # Mock stdout to return endpoint line
+    stdout = MagicMock()
+    stdout.readline = AsyncMock(
+        return_value=b"ACP streamable-http endpoint: http://127.0.0.1:54321/api/v1/acp\n"
+    )
+    process.stdout = stdout
+    
+    # Mock stderr
+    stderr = MagicMock()
+    stderr.read = AsyncMock(return_value=b"")
+    process.stderr = stderr
+    
     return process
 
 
-@pytest.fixture
-def daemon():
-    """Create daemon instance for testing."""
-    return AcpDaemon(
-        port=6275,
-        host="127.0.0.1",
-        codebuddy_bin="codebuddy",
-        startup_timeout=5.0,
-        health_check_timeout=1.0,
-    )
+@pytest.mark.asyncio
+async def test_daemon_discover_endpoint_success(daemon, mock_process):
+    """Test successful endpoint discovery from stdout."""
+    daemon._process = mock_process
+    
+    base_url = await daemon._discover_endpoint()
+    
+    assert base_url == "http://127.0.0.1:54321/api/v1/acp"
 
 
 @pytest.mark.asyncio
-async def test_daemon_startup_success(daemon, mock_process):
-    """Test successful daemon startup with health check."""
+async def test_daemon_discover_endpoint_timeout(daemon):
+    """Test endpoint discovery times out."""
+    process = MagicMock()
+    process.returncode = None
+    stdout = MagicMock()
+    # Simulate slow output that never matches
+    stdout.readline = AsyncMock(return_value=b"Some other output\n")
+    process.stdout = stdout
+    daemon._process = process
+    daemon.startup_timeout = 0.1
     
-    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
-        with patch.object(daemon, '_check_health', return_value=True):
-            await daemon._start_process()
-    
-    assert daemon.state.pid == 12345
-    assert daemon.state.boot_count == 1
-    assert daemon.state.process == mock_process
-    assert daemon.state.last_error is None
+    with pytest.raises(AcpDaemonStartupError, match="timeout"):
+        await daemon._discover_endpoint()
 
 
 @pytest.mark.asyncio
-async def test_daemon_startup_health_check_timeout(daemon, mock_process):
-    """Test daemon startup fails when health check times out."""
+async def test_daemon_discover_endpoint_process_exited(daemon):
+    """Test endpoint discovery when process exits early."""
+    process = MagicMock()
+    process.returncode = 1
+    stdout = MagicMock()
+    stdout.readline = AsyncMock(return_value=b"")
+    process.stdout = stdout
+    stderr = MagicMock()
+    stderr.read = AsyncMock(return_value=b"Error: binary not found")
+    process.stderr = stderr
+    daemon._process = process
     
-    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
-        with patch.object(daemon, '_check_health', return_value=False):
-            with pytest.raises(RuntimeError, match="health check timeout"):
-                await daemon._start_process()
-    
-    assert daemon.state.last_error is not None
-    assert "timeout" in daemon.state.last_error
+    with pytest.raises(AcpDaemonStartupError, match="exited"):
+        await daemon._discover_endpoint()
 
 
 @pytest.mark.asyncio
-async def test_daemon_startup_binary_not_found(daemon):
-    """Test daemon startup fails when binary not found."""
-    
-    with patch('asyncio.create_subprocess_exec', side_effect=FileNotFoundError()):
-        with pytest.raises(RuntimeError, match="binary not found"):
-            await daemon._start_process()
-    
-    assert daemon.state.last_error is not None
-    assert "not found" in daemon.state.last_error
-
-
-@pytest.mark.asyncio
-async def test_daemon_ensure_running_starts_if_not_running(daemon, mock_process):
-    """Test ensure_running starts daemon if not already running."""
-    
-    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
-        with patch.object(daemon, '_check_health', return_value=True):
-            await daemon.ensure_running()
-    
-    assert daemon.state.pid == 12345
-    assert daemon.state.boot_count == 1
-
-
-@pytest.mark.asyncio
-async def test_daemon_ensure_running_no_op_if_healthy(daemon, mock_process):
-    """Test ensure_running does nothing if daemon already healthy."""
-    
-    # Start daemon first
-    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
-        with patch.object(daemon, '_check_health', return_value=True):
-            await daemon.ensure_running()
-    
-    boot_count_before = daemon.state.boot_count
-    
-    # Call ensure_running again - should be no-op
-    with patch.object(daemon, '_check_health', return_value=True):
-        await daemon.ensure_running()
-    
-    assert daemon.state.boot_count == boot_count_before  # No restart
-
-
-@pytest.mark.asyncio
-async def test_daemon_ensure_running_restarts_if_unhealthy(daemon, mock_process):
-    """Test ensure_running restarts daemon if unhealthy."""
-    
-    # Start daemon first
-    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
-        with patch.object(daemon, '_check_health', return_value=True):
-            await daemon.ensure_running()
-    
-    boot_count_before = daemon.state.boot_count
-    
-    # Simulate daemon becoming unhealthy
-    mock_process.returncode = 1  # Process exited
-    
-    # Create new mock for restarted process
-    new_mock_process = MagicMock()
-    new_mock_process.pid = 54321
-    new_mock_process.returncode = None
-    new_mock_process.wait = AsyncMock(return_value=0)
-    
-    # Call ensure_running - should restart
-    with patch('asyncio.create_subprocess_exec', return_value=new_mock_process):
-        with patch.object(daemon, '_check_health', return_value=True):
-            await daemon.ensure_running()
-    
-    assert daemon.state.boot_count == boot_count_before + 1  # Restarted
-    assert daemon.state.pid == 54321
-
-
-@pytest.mark.asyncio
-async def test_daemon_stop_process_graceful(daemon, mock_process):
-    """Test graceful process termination."""
-    
-    daemon.state.process = mock_process
-    daemon.state.pid = 12345
-    
-    await daemon._stop_process()
-    
-    mock_process.terminate.assert_called_once()
-    mock_process.wait.assert_called_once()
-    assert daemon.state.process is None
-    assert daemon.state.pid is None
-
-
-@pytest.mark.asyncio
-async def test_daemon_stop_process_force_kill(daemon, mock_process):
-    """Test force kill when graceful termination times out."""
-    
-    daemon.state.process = mock_process
-    daemon.state.pid = 12345
-    
-    # Make wait timeout on first call, succeed on second
-    mock_process.wait = AsyncMock(side_effect=[asyncio.TimeoutError(), 0])
-    
-    await daemon._stop_process()
-    
-    mock_process.terminate.assert_called_once()
-    mock_process.kill.assert_called_once()
-    assert daemon.state.process is None
-
-
-@pytest.mark.asyncio
-async def test_daemon_shutdown(daemon, mock_process):
-    """Test daemon shutdown."""
-    
-    # Start daemon
-    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
-        with patch.object(daemon, '_check_health', return_value=True):
-            await daemon.ensure_running()
-    
-    # Shutdown
-    await daemon.shutdown()
-    
-    mock_process.terminate.assert_called_once()
-    assert daemon.state.process is None
-    assert daemon.state.pid is None
-
-
-def test_daemon_get_status(daemon):
-    """Test daemon status reporting."""
-    
-    daemon.state.pid = 12345
-    daemon.state.boot_count = 3
-    daemon.state.last_health_ok = 1234567890.0
-    daemon.state.last_error = None
-    daemon.state.process = MagicMock()
-    
-    status = daemon.get_status()
-    
-    assert status["pid"] == 12345
-    assert status["port"] == 6275
-    assert status["boot_count"] == 3
-    assert status["last_health_ok"] == 1234567890.0
-    assert status["last_error"] is None
-    assert status["is_running"] is True
-
-
-def test_daemon_get_status_not_running(daemon):
-    """Test daemon status when not running."""
-    
-    status = daemon.get_status()
-    
-    assert status["pid"] is None
-    assert status["is_running"] is False
-
-
-def test_daemon_base_url(daemon):
-    """Test base URL construction."""
-    
-    assert daemon.base_url == "http://127.0.0.1:6275"
-
-
-@pytest.mark.asyncio
-async def test_daemon_check_health_success(daemon):
-    """Test health check with successful response."""
+async def test_daemon_connect(daemon):
+    """Test /connect handshake."""
+    daemon.base_url = "http://127.0.0.1:54321/api/v1/acp"
     
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"status": "UP"}
+    mock_response.json.return_value = {
+        "connectionId": "conn_123",
+        "sessionToken": "token_456",
+    }
+    mock_response.raise_for_status = MagicMock()
     
     mock_client = MagicMock()
-    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.post = AsyncMock(return_value=mock_response)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock()
     
-    with patch('httpx.AsyncClient', return_value=mock_client):
-        result = await daemon._check_health()
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        await daemon._connect()
     
-    assert result is True
-    assert daemon.state.last_health_ok is not None
-    assert daemon.state.last_error is None
+    assert daemon.connection_id == "conn_123"
+    assert daemon.session_token == "token_456"
 
 
 @pytest.mark.asyncio
-async def test_daemon_check_health_failure(daemon):
-    """Test health check with failed response."""
+async def test_daemon_stop_graceful(daemon, mock_process):
+    """Test graceful shutdown."""
+    daemon._process = mock_process
     
-    mock_client = MagicMock()
-    mock_client.get = AsyncMock(side_effect=Exception("Connection failed"))
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock()
+    await daemon._kill_process()
     
-    with patch('httpx.AsyncClient', return_value=mock_client):
-        result = await daemon._check_health()
+    mock_process.terminate.assert_called_once()
+    mock_process.wait.assert_called_once()
+    assert daemon._process is None
+
+
+@pytest.mark.asyncio
+async def test_daemon_stop_force_kill(daemon):
+    """Test force kill when graceful termination times out."""
+    process = MagicMock()
+    process.terminate = MagicMock()
+    process.kill = MagicMock()
+    # First wait times out, second succeeds
+    process.wait = AsyncMock(side_effect=[asyncio.TimeoutError(), 0])
+    daemon._process = process
     
-    assert result is False
+    await daemon._kill_process()
+    
+    process.terminate.assert_called_once()
+    process.kill.assert_called_once()
+    assert daemon._process is None
+
+
+def test_daemon_is_running_false_initially(daemon):
+    """Test is_running is False before start."""
+    assert daemon.is_running is False
+
+
+def test_daemon_get_status(daemon):
+    """Test status reporting."""
+    status = daemon.get_status()
+    
+    assert status["is_running"] is False
+    assert status["base_url"] is None
+    assert status["connection_id"] is None
+    assert status["pid"] is None

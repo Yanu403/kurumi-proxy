@@ -1,15 +1,13 @@
 """
-ACP to OpenAI translator.
+ACP events → OpenAI chat completion translator.
 
-Converts ACP session/update events to OpenAI-compatible chat completion
-format (both streaming and non-streaming).
+Maps real ACP session/update events to OpenAI-compatible format:
+- agent_message_chunk (content.text) → delta.content
+- agent_thought_chunk (content.text) → delta.reasoning_content
+- tool_call (toolCallId, toolName, arguments) → delta.tool_calls
+- stopReason → finish_reason
 
-Key responsibilities:
-- Process agent_message_chunk -> delta.content
-- Process agent_thought_chunk -> delta.reasoning_content
-- Process tool_call + tool_call_update -> delta.tool_calls
-- Handle interruption_request, session_end, usage_update
-- Map stopReason to finish_reason
+Handles refusal with upstream error surfacing (HTTP 502).
 """
 
 import json
@@ -18,181 +16,132 @@ import time
 import uuid
 from typing import Any, AsyncIterator
 
-from kurumi_proxy.models import StreamChunk, StreamChoice, DeltaMessage, DeltaToolCall
-from kurumi_proxy.providers.codebuddy_acp.tool_call_helper import ToolCallAccumulator
+from kurumi_proxy.providers.codebuddy_acp.session import AcpUpstreamRefusalError
 
 logger = logging.getLogger(__name__)
 
 
-# ACP stopReason to OpenAI finish_reason mapping
-STOP_REASON_MAP = {
-    "end_turn": "stop",
-    "cancelled": "stop",
-    # `refusal` arrives both for safety refusals and for upstream auth/credit
-    # errors (the daemon embeds the upstream message under
-    # `_meta["codebuddy.ai/errorMessage"]`). Map it to `content_filter` for
-    # the OpenAI shape; the chat_completions_acp handler is also expected to
-    # surface refusals carrying upstream `category=auth` errors as HTTP 502.
-    "refusal": "content_filter",
-    "max_tokens": "length",
-    "tool_use": "tool_calls",
-}
-
-
-def extract_upstream_error(result: dict[str, Any]) -> dict[str, Any] | None:
-    """Surface upstream daemon errors hidden in ACP `_meta`.
-
-    The CodeBuddy daemon's `result.stopReason="refusal"` payload carries a
-    JSON-encoded blob under `_meta["codebuddy.ai/errorMessage"]` that mirrors
-    the JSON-RPC error shape: `{"code", "message", "data": {...}}`. The
-    `data.category` field is `"auth"` for missing/invalid CodeBuddy access
-    tokens and `"quota"` / `"rate_limit"` for throttling.
-
-    Returns the parsed error dict when present, otherwise None.
+def parse_sse_buffer(buf: bytes) -> tuple[list[dict[str, Any]], bytes]:
     """
-    if "result" not in result:
-        return None
-    payload = result["result"]
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("stopReason") != "refusal":
-        return None
-    meta = payload.get("_meta")
-    if not isinstance(meta, dict):
-        return None
-    raw = meta.get("codebuddy.ai/errorMessage")
-    if not raw:
-        return None
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str):
-        try:
-            decoded = json.loads(raw)
-            if isinstance(decoded, dict):
-                return decoded
-        except json.JSONDecodeError:
-            return {"message": raw, "data": {"category": "unknown"}}
-    return None
-
-
-def process_agent_message_chunk(update: dict[str, Any]) -> str | None:
-    """Extract text content from agent_message_chunk event."""
-    if update.get("sessionUpdate") != "agent_message_chunk":
-        return None
+    Parse SSE events from a buffer, returning (events, remaining_buf).
     
-    # agent_message_chunk has 'text' field
+    SSE format:
+        :ok\n
+        event: message\n
+        data: {...}\n
+        \n
+    
+    Returns tuple of (parsed_events, leftover_bytes).
+    """
+    events = []
+    while b"\n\n" in buf:
+        block, buf = buf.split(b"\n\n", 1)
+        data_lines = []
+        for line in block.split(b"\n"):
+            if line.startswith(b":"):
+                continue  # SSE comment
+            if line.startswith(b"data:"):
+                data_lines.append(line[5:].lstrip().decode())
+        if data_lines:
+            try:
+                events.append(json.loads("".join(data_lines)))
+            except json.JSONDecodeError:
+                continue
+    return events, buf
+
+
+def extract_content_text(update: dict[str, Any]) -> str | None:
+    """
+    Extract text from agent_message_chunk or agent_thought_chunk.
+    
+    Real format: {"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"..."}}
+    """
+    content = update.get("content")
+    if isinstance(content, dict):
+        return content.get("text")
+    # Fallback: some events might have text at top level
     return update.get("text")
 
 
-def process_agent_thought_chunk(update: dict[str, Any]) -> str | None:
-    """Extract reasoning content from agent_thought_chunk event."""
-    if update.get("sessionUpdate") != "agent_thought_chunk":
-        return None
-    
-    # agent_thought_chunk has 'text' field
-    return update.get("text")
-
-
-def process_tool_call_event(update: dict[str, Any]) -> dict[str, Any] | None:
+def extract_tool_call(update: dict[str, Any]) -> dict[str, Any] | None:
     """
-    Process tool_call event (new tool call started).
+    Extract tool call from tool_call event.
     
-    Returns dict with:
-    - index: tool call index
-    - id: tool call ID
-    - type: "function"
-    - function: {"name": "...", "arguments": ""}
+    Real format: {"sessionUpdate":"tool_call","toolCallId":"...","toolName":"...","arguments":"{...}"}
+    
+    Returns OpenAI-shaped tool_call dict with id, type, function.name, function.arguments.
     """
     if update.get("sessionUpdate") != "tool_call":
         return None
     
-    # tool_call event format:
-    # {
-    #   "sessionUpdate": "tool_call",
-    #   "toolUseId": "...",
-    #   "toolName": "...",
-    #   "input": {...}  # full input object, not streaming
-    # }
-    
-    tool_use_id = update.get("toolUseId", "")
+    tool_call_id = update.get("toolCallId", "")
     tool_name = update.get("toolName", "")
-    tool_input = update.get("input", {})
+    arguments = update.get("arguments", "")
     
-    # Convert input to JSON string
-    arguments_str = json.dumps(tool_input) if tool_input else ""
+    # Ensure tool_call_id has call_ prefix for OpenAI compatibility
+    if tool_call_id and not tool_call_id.startswith("call_"):
+        tool_call_id = f"call_{tool_call_id}"
     
     return {
-        "id": tool_use_id if tool_use_id.startswith("call_") else f"call_{tool_use_id}",
+        "id": tool_call_id,
         "type": "function",
         "function": {
             "name": tool_name,
-            "arguments": arguments_str,
+            "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments),
         }
     }
 
 
-def process_tool_call_update_event(update: dict[str, Any]) -> dict[str, Any] | None:
+def map_stop_reason(stop_reason: str | None, meta: dict | None = None) -> str:
     """
-    Process tool_call_update event (streaming tool call arguments).
+    Map ACP stopReason to OpenAI finish_reason.
     
-    Returns dict with:
-    - index: tool call index
-    - id: tool call ID (if present)
-    - function: {"arguments": "..."}  # incremental
+    - end_turn → stop
+    - max_tokens → length
+    - cancelled → stop
+    - refusal → stop (but caller should check for upstream error)
+    - tool_use → tool_calls (if tool_calls were emitted)
     """
-    if update.get("sessionUpdate") != "tool_call_update":
-        return None
-    
-    # tool_call_update event format:
-    # {
-    #   "sessionUpdate": "tool_call_update",
-    #   "toolUseId": "...",
-    #   "partialInput": "..."  # partial JSON string
-    # }
-    
-    tool_use_id = update.get("toolUseId")
-    partial_input = update.get("partialInput", "")
-    
-    result = {
-        "function": {
-            "arguments": partial_input
-        }
-    }
-    
-    if tool_use_id:
-        result["id"] = tool_use_id if tool_use_id.startswith("call_") else f"call_{tool_use_id}"
-    
-    return result
+    if stop_reason == "end_turn":
+        return "stop"
+    elif stop_reason == "max_tokens":
+        return "length"
+    elif stop_reason == "cancelled":
+        return "stop"
+    elif stop_reason == "refusal":
+        return "stop"  # Caller checks _meta for upstream error
+    elif stop_reason == "tool_use":
+        return "tool_calls"
+    else:
+        return "stop"
 
 
-def extract_usage_from_result(result: dict[str, Any]) -> dict[str, int] | None:
-    """Extract token usage from ACP result event."""
-    if "result" not in result:
+def check_upstream_refusal(result: dict[str, Any]) -> str | None:
+    """
+    Check if result indicates an upstream refusal with error message.
+    
+    Returns the error message string if present, otherwise None.
+    """
+    if result.get("stopReason") != "refusal":
         return None
     
-    result_data = result["result"]
+    meta = result.get("_meta", {})
+    if not isinstance(meta, dict):
+        return None
     
-    # ACP may include usage in result
-    # Check _meta or top-level usage fields
-    usage_data = result_data.get("usage") or result_data.get("_meta", {}).get("usage")
-    
-    if usage_data:
-        return {
-            "prompt_tokens": usage_data.get("inputTokens", 0),
-            "completion_tokens": usage_data.get("outputTokens", 0),
-            "total_tokens": usage_data.get("totalTokens", 0),
-        }
+    error_message = meta.get("codebuddy.ai/errorMessage")
+    if error_message:
+        # error_message might be a JSON string or already parsed
+        if isinstance(error_message, str):
+            try:
+                parsed = json.loads(error_message)
+                if isinstance(parsed, dict):
+                    return parsed.get("message", error_message)
+            except json.JSONDecodeError:
+                pass
+        return str(error_message)
     
     return None
-
-
-def extract_stop_reason(result: dict[str, Any]) -> str:
-    """Extract and map stopReason from ACP result to OpenAI finish_reason."""
-    if "result" not in result:
-        return "stop"
-    
-    stop_reason = result["result"].get("stopReason", "end_turn")
-    return STOP_REASON_MAP.get(stop_reason, "stop")
 
 
 async def translate_to_openai_stream(
@@ -203,174 +152,155 @@ async def translate_to_openai_stream(
     created: int | None = None,
 ) -> AsyncIterator[str]:
     """
-    Translate ACP session/update events to OpenAI streaming format.
+    Translate ACP stream events to OpenAI SSE format.
     
-    Yields SSE strings in OpenAI format:
-    - "data: {JSON chunk}\\n\\n"
-    - "data: [DONE]\\n\\n"
+    Yields SSE-formatted strings: "data: {...}\n\n" and "data: [DONE]\n\n".
     
-    Args:
-        acp_events: AsyncIterator of ACP JSON-RPC messages
-        model: Model name for response
-        completion_id: Optional completion ID (generated if not provided)
-        created: Optional created timestamp (current time if not provided)
-    
-    Yields:
-        SSE-formatted strings for OpenAI streaming response
+    Raises AcpUpstreamRefusalError if stopReason="refusal" with upstream error.
     """
     if completion_id is None:
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-    
     if created is None:
         created = int(time.time())
     
-    tool_accumulator = ToolCallAccumulator()
-    finish_reason: str | None = None
-    has_yielded_content = False
+    # Emit initial role chunk
+    yield _format_stream_chunk(
+        completion_id=completion_id,
+        created=created,
+        model=model,
+        delta={"role": "assistant"},
+        finish_reason=None,
+    )
     
-    async for message in acp_events:
+    # Track tool calls for index mapping
+    tool_call_indices: dict[str, int] = {}  # ACP toolCallId → OpenAI index
+    next_tool_index = 0
+    has_tool_calls = False
+    
+    async for event in acp_events:
         # Handle session/update notifications
-        if message.get("method") == "session/update":
-            params = message.get("params", {})
+        if event.get("method") == "session/update":
+            params = event.get("params", {})
             update = params.get("update", {})
+            update_type = update.get("sessionUpdate")
             
-            # Process agent_message_chunk (text content)
-            text = process_agent_message_chunk(update)
-            if text:
-                delta = DeltaMessage(content=text)
-                chunk = StreamChunk(
-                    id=completion_id,
-                    created=created,
-                    model=model,
-                    choices=[StreamChoice(index=0, delta=delta, finish_reason=None)]
-                )
-                yield f"data: {chunk.model_dump_json()}\n\n"
-                has_yielded_content = True
-                continue
-            
-            # Process agent_thought_chunk (reasoning content)
-            thought = process_agent_thought_chunk(update)
-            if thought:
-                delta = DeltaMessage(reasoning_content=thought)
-                chunk = StreamChunk(
-                    id=completion_id,
-                    created=created,
-                    model=model,
-                    choices=[StreamChoice(index=0, delta=delta, finish_reason=None)]
-                )
-                yield f"data: {chunk.model_dump_json()}\n\n"
-                has_yielded_content = True
-                continue
-            
-            # Process tool_call (new tool call)
-            tool_call_data = process_tool_call_event(update)
-            if tool_call_data:
-                # Start new tool call
-                index = len(tool_accumulator.calls)
-                tool_accumulator.process_delta(index, tool_call_data)
-                
-                # Yield initial tool call delta
-                delta_tool_call = DeltaToolCall(
-                    index=index,
-                    id=tool_call_data["id"],
-                    type="function",
-                    function={
-                        "name": tool_call_data["function"]["name"],
-                        "arguments": ""
-                    }
-                )
-                delta = DeltaMessage(tool_calls=[delta_tool_call])
-                chunk = StreamChunk(
-                    id=completion_id,
-                    created=created,
-                    model=model,
-                    choices=[StreamChoice(index=0, delta=delta, finish_reason=None)]
-                )
-                yield f"data: {chunk.model_dump_json()}\n\n"
-                has_yielded_content = True
-                
-                # Yield arguments if present
-                if tool_call_data["function"]["arguments"]:
-                    delta_tool_call = DeltaToolCall(
-                        index=index,
-                        function={"arguments": tool_call_data["function"]["arguments"]}
-                    )
-                    delta = DeltaMessage(tool_calls=[delta_tool_call])
-                    chunk = StreamChunk(
-                        id=completion_id,
+            if update_type == "agent_message_chunk":
+                text = extract_content_text(update)
+                if text:
+                    yield _format_stream_chunk(
+                        completion_id=completion_id,
                         created=created,
                         model=model,
-                        choices=[StreamChoice(index=0, delta=delta, finish_reason=None)]
+                        delta={"content": text},
+                        finish_reason=None,
                     )
-                    yield f"data: {chunk.model_dump_json()}\n\n"
-                continue
             
-            # Process tool_call_update (streaming arguments)
-            tool_update_data = process_tool_call_update_event(update)
-            if tool_update_data:
-                # Find the latest tool call index
-                index = len(tool_accumulator.calls) - 1
-                if index >= 0:
-                    tool_accumulator.process_delta(index, tool_update_data)
+            elif update_type == "agent_thought_chunk":
+                text = extract_content_text(update)
+                if text:
+                    yield _format_stream_chunk(
+                        completion_id=completion_id,
+                        created=created,
+                        model=model,
+                        delta={"reasoning_content": text},
+                        finish_reason=None,
+                    )
+            
+            elif update_type == "tool_call":
+                tool_call = extract_tool_call(update)
+                if tool_call:
+                    has_tool_calls = True
+                    tool_id = tool_call["id"]
                     
-                    # Yield argument delta
-                    delta_tool_call = DeltaToolCall(
-                        index=index,
-                        function={"arguments": tool_update_data["function"]["arguments"]}
-                    )
-                    delta = DeltaMessage(tool_calls=[delta_tool_call])
-                    chunk = StreamChunk(
-                        id=completion_id,
+                    # Assign index for this tool call
+                    if tool_id not in tool_call_indices:
+                        tool_call_indices[tool_id] = next_tool_index
+                        next_tool_index += 1
+                    
+                    index = tool_call_indices[tool_id]
+                    
+                    yield _format_stream_chunk(
+                        completion_id=completion_id,
                         created=created,
                         model=model,
-                        choices=[StreamChoice(index=0, delta=delta, finish_reason=None)]
+                        delta={
+                            "tool_calls": [{
+                                "index": index,
+                                "id": tool_call["id"],
+                                "type": "function",
+                                "function": tool_call["function"],
+                            }]
+                        },
+                        finish_reason=None,
                     )
-                    yield f"data: {chunk.model_dump_json()}\n\n"
-                    has_yielded_content = True
-                continue
-        
-        # Handle result (final response with stopReason)
-        if "result" in message:
-            finish_reason = extract_stop_reason(message)
             
-            # Check for tool calls in result
-            if tool_accumulator.calls:
+            # Ignore: session_info_update, usage_update, tool_call_update
+            
+            continue
+        
+        # Handle final result event
+        if "result" in event:
+            result = event["result"]
+            stop_reason = result.get("stopReason")
+            meta = result.get("_meta")
+            
+            # Check for upstream refusal
+            error_message = check_upstream_refusal(result)
+            if error_message:
+                raise AcpUpstreamRefusalError(error_message)
+            
+            # Determine finish reason
+            finish_reason = map_stop_reason(stop_reason, meta)
+            if has_tool_calls and stop_reason in ("tool_use", "end_turn"):
                 finish_reason = "tool_calls"
             
+            yield _format_stream_chunk(
+                completion_id=completion_id,
+                created=created,
+                model=model,
+                delta={},
+                finish_reason=finish_reason,
+            )
             break
         
-        # Handle error
-        if "error" in message:
-            error = message["error"]
-            logger.error(f"ACP error: {error}")
-            # Treat as refusal/stop
-            finish_reason = "stop"
+        # Handle error event
+        if "error" in event:
+            error = event["error"]
+            logger.error(f"ACP stream error: {error}")
+            yield _format_stream_chunk(
+                completion_id=completion_id,
+                created=created,
+                model=model,
+                delta={},
+                finish_reason="stop",
+            )
             break
     
-    # Yield final chunk with finish_reason
-    if not has_yielded_content:
-        # No content yielded, send empty delta
-        delta = DeltaMessage(content="")
-        chunk = StreamChunk(
-            id=completion_id,
-            created=created,
-            model=model,
-            choices=[StreamChoice(index=0, delta=delta, finish_reason=finish_reason or "stop")]
-        )
-        yield f"data: {chunk.model_dump_json()}\n\n"
-    else:
-        # Send finish chunk
-        delta = DeltaMessage()
-        chunk = StreamChunk(
-            id=completion_id,
-            created=created,
-            model=model,
-            choices=[StreamChoice(index=0, delta=delta, finish_reason=finish_reason or "stop")]
-        )
-        yield f"data: {chunk.model_dump_json()}\n\n"
-    
-    # Send [DONE]
+    # Emit [DONE]
     yield "data: [DONE]\n\n"
+
+
+def _format_stream_chunk(
+    *,
+    completion_id: str,
+    created: int,
+    model: str,
+    delta: dict[str, Any],
+    finish_reason: str | None,
+) -> str:
+    """Format a single SSE stream chunk."""
+    chunk = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": delta,
+            "finish_reason": finish_reason,
+        }]
+    }
+    return f"data: {json.dumps(chunk)}\n\n"
 
 
 async def collect_openai_completion(
@@ -381,145 +311,92 @@ async def collect_openai_completion(
     created: int | None = None,
 ) -> dict[str, Any]:
     """
-    Translate ACP session/update events to OpenAI non-streaming format.
+    Collect all ACP events and return a complete OpenAI ChatCompletion dict.
     
-    Collects all events and returns a complete ChatCompletionResponse.
-    
-    Args:
-        acp_events: AsyncIterator of ACP JSON-RPC messages
-        model: Model name for response
-        completion_id: Optional completion ID (generated if not provided)
-        created: Optional created timestamp (current time if not provided)
-    
-    Returns:
-        Dict representing ChatCompletionResponse (or ExtendedChatCompletionResponse with tool_calls)
+    Raises AcpUpstreamRefusalError if stopReason="refusal" with upstream error.
     """
     if completion_id is None:
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-    
     if created is None:
         created = int(time.time())
     
-    tool_accumulator = ToolCallAccumulator()
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
+    tool_calls_list: list[dict[str, Any]] = []
+    tool_call_map: dict[str, int] = {}  # ACP toolCallId → index
     finish_reason = "stop"
-    upstream_error: dict[str, Any] | None = None
-    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     
-    async for message in acp_events:
+    async for event in acp_events:
         # Handle session/update notifications
-        if message.get("method") == "session/update":
-            params = message.get("params", {})
+        if event.get("method") == "session/update":
+            params = event.get("params", {})
             update = params.get("update", {})
+            update_type = update.get("sessionUpdate")
             
-            # Collect agent_message_chunk (text content)
-            text = process_agent_message_chunk(update)
-            if text:
-                content_parts.append(text)
-                continue
+            if update_type == "agent_message_chunk":
+                text = extract_content_text(update)
+                if text:
+                    content_parts.append(text)
             
-            # Collect agent_thought_chunk (reasoning content)
-            thought = process_agent_thought_chunk(update)
-            if thought:
-                reasoning_parts.append(thought)
-                continue
+            elif update_type == "agent_thought_chunk":
+                text = extract_content_text(update)
+                if text:
+                    reasoning_parts.append(text)
             
-            # Collect tool_call
-            tool_call_data = process_tool_call_event(update)
-            if tool_call_data:
-                index = len(tool_accumulator.calls)
-                tool_accumulator.process_delta(index, tool_call_data)
-                continue
-            
-            # Collect tool_call_update
-            tool_update_data = process_tool_call_update_event(update)
-            if tool_update_data:
-                index = len(tool_accumulator.calls) - 1
-                if index >= 0:
-                    tool_accumulator.process_delta(index, tool_update_data)
-                continue
-            
-            # Collect usage_update
-            if update.get("sessionUpdate") == "usage_update":
-                used = update.get("used", 0)
-                size = update.get("size", 0)
-                # Rough estimation - ACP doesn't always provide detailed token counts
-                usage["completion_tokens"] = max(usage["completion_tokens"], used // 4)
-                continue
+            elif update_type == "tool_call":
+                tool_call = extract_tool_call(update)
+                if tool_call:
+                    tool_id = tool_call["id"]
+                    if tool_id not in tool_call_map:
+                        tool_call_map[tool_id] = len(tool_calls_list)
+                        tool_calls_list.append(tool_call)
         
-        # Handle result (final response)
-        if "result" in message:
-            finish_reason = extract_stop_reason(message)
-            upstream_error = extract_upstream_error(message)
-
-            # Extract usage if available
-            result_usage = extract_usage_from_result(message)
-            if result_usage:
-                usage = result_usage
-
-            # Check for tool calls
-            if tool_accumulator.calls:
+        # Handle final result
+        if "result" in event:
+            result = event["result"]
+            stop_reason = result.get("stopReason")
+            meta = result.get("_meta")
+            
+            # Check for upstream refusal
+            error_message = check_upstream_refusal(result)
+            if error_message:
+                raise AcpUpstreamRefusalError(error_message)
+            
+            finish_reason = map_stop_reason(stop_reason, meta)
+            if tool_calls_list and stop_reason in ("tool_use", "end_turn"):
                 finish_reason = "tool_calls"
-
             break
         
         # Handle error
-        if "error" in message:
-            error = message["error"]
-            logger.error(f"ACP error: {error}")
-            finish_reason = "stop"
+        if "error" in event:
+            logger.error(f"ACP error: {event['error']}")
             break
     
     # Build response
-    content = "".join(content_parts) if content_parts else None
-    reasoning_content = "".join(reasoning_parts) if reasoning_parts else None
-    
-    # Build message
-    message_data: dict[str, Any] = {
+    message: dict[str, Any] = {
         "role": "assistant",
-        "content": content,
+        "content": "".join(content_parts) if content_parts else None,
     }
     
-    # Add tool_calls if present
-    if tool_accumulator.calls:
-        tool_calls_list = []
-        for call in tool_accumulator.get_all_calls():
-            tool_calls_list.append({
-                "id": call["id"],
-                "type": "function",
-                "function": {
-                    "name": call["function"]["name"],
-                    "arguments": call["function"]["arguments"],
-                }
-            })
-        message_data["tool_calls"] = tool_calls_list
+    if reasoning_parts:
+        message["reasoning_content"] = "".join(reasoning_parts)
     
-    # Add reasoning_content if present
-    if reasoning_content:
-        message_data["reasoning_content"] = reasoning_content
+    if tool_calls_list:
+        message["tool_calls"] = tool_calls_list
     
-    # Build choice
-    choice = {
-        "index": 0,
-        "message": message_data,
-        "finish_reason": finish_reason,
-    }
-    
-    # Build response
-    response = {
+    return {
         "id": completion_id,
         "object": "chat.completion",
         "created": created,
         "model": model,
-        "choices": [choice],
-        "usage": usage,
+        "choices": [{
+            "index": 0,
+            "message": message,
+            "finish_reason": finish_reason,
+        }],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
     }
-
-    # Surface upstream errors out-of-band so the FastAPI layer can decide
-    # whether to convert them to HTTP 502 instead of returning a fake-success
-    # body. Callers that don't care can ignore this key.
-    if upstream_error is not None:
-        response["_upstream_error"] = upstream_error
-
-    return response

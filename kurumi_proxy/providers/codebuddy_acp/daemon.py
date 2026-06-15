@@ -1,202 +1,318 @@
 """
-CodeBuddy daemon lifecycle manager.
+CodeBuddy ACP daemon lifecycle manager.
 
-Manages a persistent `codebuddy --serve` process with health checks,
-auto-restart, and graceful shutdown.
+Spawns `codebuddy --acp --acp-transport streamable-http -y`, parses stdout
+to discover the auto-assigned port, performs the /connect handshake, and
+calls initialize to verify protocol version.
 """
 
 import asyncio
 import logging
+import re
 import time
-from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
 
+from kurumi_proxy.providers.codebuddy_acp.client import AcpJsonRpcClient
+
 logger = logging.getLogger(__name__)
 
+# Regex to parse the daemon's stdout endpoint announcement
+ENDPOINT_REGEX = re.compile(r"ACP streamable-http endpoint: (http://127\.0\.0\.1:\d+/api/v1/acp)")
 
-@dataclass
-class DaemonState:
-    """Current state of the CodeBuddy daemon."""
-    pid: Optional[int] = None
-    port: int = 6275
-    boot_count: int = 0
-    last_health_ok: Optional[float] = None
-    last_error: Optional[str] = None
-    process: Optional[asyncio.subprocess.Process] = None
+
+class AcpDaemonStartupError(Exception):
+    """Raised when daemon fails to start or endpoint discovery times out."""
+    pass
 
 
 class AcpDaemon:
     """
-    Manages the CodeBuddy CLI daemon lifecycle.
+    Manages a persistent CodeBuddy ACP daemon process.
     
-    Features:
-    - Automatic startup with health checks
-    - Auto-restart on failure
-    - Graceful shutdown
-    - State tracking for monitoring
+    Lifecycle:
+    1. start() - spawn process, discover port, connect, initialize
+    2. is_running - check if daemon is alive
+    3. stop() - graceful shutdown (SIGTERM, wait, SIGKILL)
+    4. restart() - stop then start
     """
     
     def __init__(
         self,
         *,
-        port: int = 6275,
-        host: str = "127.0.0.1",
         codebuddy_bin: str = "codebuddy",
         startup_timeout: float = 10.0,
-        health_check_timeout: float = 2.0,
     ):
-        self.port = port
-        self.host = host
         self.codebuddy_bin = codebuddy_bin
         self.startup_timeout = startup_timeout
-        self.health_check_timeout = health_check_timeout
-        self.state = DaemonState(port=port)
+        
+        # Populated after successful start()
+        self.base_url: Optional[str] = None
+        self.connection_id: Optional[str] = None
+        self.session_token: Optional[str] = None
+        self.rpc_client: Optional[AcpJsonRpcClient] = None
+        
+        # Internal state
+        self._process: Optional[asyncio.subprocess.Process] = None
         self._lock = asyncio.Lock()
+        self._last_health_check: Optional[float] = None
     
     @property
-    def base_url(self) -> str:
-        """Base URL for daemon HTTP API."""
-        return f"http://{self.host}:{self.port}"
+    def is_running(self) -> bool:
+        """Check if daemon process is alive and connected."""
+        if self._process is None:
+            return False
+        if self._process.returncode is not None:
+            # Process has exited
+            return False
+        return self.rpc_client is not None
     
-    async def ensure_running(self) -> None:
+    async def start(self) -> None:
         """
-        Ensure daemon is running and healthy.
+        Start the daemon and perform the connection handshake.
         
-        Starts daemon if not running, or restarts if unhealthy.
+        Raises AcpDaemonStartupError on failure.
         """
         async with self._lock:
-            if await self._is_healthy():
+            if self.is_running:
+                logger.debug("Daemon already running")
                 return
             
-            # Stop any existing unhealthy process
-            if self.state.process is not None:
-                await self._stop_process()
-            
-            # Start new process
-            await self._start_process()
+            await self._start_locked()
     
-    async def _start_process(self) -> None:
-        """Start the CodeBuddy daemon process."""
-        logger.info(f"Starting CodeBuddy daemon on {self.host}:{self.port}")
+    async def _start_locked(self) -> None:
+        """Internal start (must hold _lock)."""
+        logger.info(f"Starting CodeBuddy ACP daemon: {self.codebuddy_bin}")
         
         try:
-            # Launch: codebuddy --serve --port <port> --host <host> -y
-            # -y skips permission gates to avoid deadlock
-            self.state.process = await asyncio.create_subprocess_exec(
+            # Spawn: codebuddy --acp --acp-transport streamable-http -y
+            self._process = await asyncio.create_subprocess_exec(
                 self.codebuddy_bin,
-                "--serve",
-                "--port", str(self.port),
-                "--host", self.host,
+                "--acp",
+                "--acp-transport", "streamable-http",
                 "-y",  # dangerously-skip-permissions
-                stdout=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             
-            self.state.pid = self.state.process.pid
-            self.state.boot_count += 1
-            logger.info(f"Daemon started with PID {self.state.pid} (boot #{self.state.boot_count})")
+            pid = self._process.pid
+            logger.info(f"Daemon spawned with PID {pid}")
             
-            # Wait for health check to pass
-            deadline = time.monotonic() + self.startup_timeout
-            while time.monotonic() < deadline:
-                if await self._check_health():
-                    logger.info("Daemon health check passed")
-                    return
-                await asyncio.sleep(0.5)
+            # Read stdout line-by-line to find the endpoint URL
+            self.base_url = await self._discover_endpoint()
+            logger.info(f"Daemon endpoint discovered: {self.base_url}")
             
-            # Health check timeout
-            self.state.last_error = "Daemon health check timeout"
-            logger.error(self.state.last_error)
-            await self._stop_process()
-            raise RuntimeError(self.state.last_error)
+            # Perform /connect handshake
+            await self._connect()
+            logger.info(f"ACP connected: connectionId={self.connection_id}")
             
-        except FileNotFoundError as exc:
-            self.state.last_error = f"CodeBuddy binary not found: {self.codebuddy_bin}"
-            logger.error(self.state.last_error)
-            raise RuntimeError(self.state.last_error) from exc
+            # Create RPC client
+            self.rpc_client = AcpJsonRpcClient(
+                base_url=self.base_url,
+                connection_id=self.connection_id,
+                session_token=self.session_token,
+            )
+            
+            # Call initialize to verify protocol version
+            await self._initialize()
+            logger.info("ACP protocol initialized (protocolVersion=1)")
+            
+            self._last_health_check = time.time()
+            
         except Exception as exc:
-            self.state.last_error = f"Failed to start daemon: {exc}"
-            logger.error(self.state.last_error)
-            raise RuntimeError(self.state.last_error) from exc
+            logger.error(f"Daemon startup failed: {exc}")
+            await self._kill_process()
+            raise AcpDaemonStartupError(str(exc)) from exc
     
-    async def _stop_process(self) -> None:
-        """Stop the daemon process gracefully."""
-        if self.state.process is None:
+    async def _discover_endpoint(self) -> str:
+        """
+        Read daemon stdout until we see the endpoint announcement line.
+        
+        Returns the base URL (e.g., "http://127.0.0.1:54321/api/v1/acp").
+        Raises AcpDaemonStartupError on timeout or process exit.
+        """
+        assert self._process is not None
+        assert self._process.stdout is not None
+        
+        deadline = time.monotonic() + self.startup_timeout
+        captured_output = []
+        
+        while time.monotonic() < deadline:
+            # Check if process exited
+            if self._process.returncode is not None:
+                stderr_output = ""
+                if self._process.stderr:
+                    try:
+                        stderr_bytes = await self._process.stderr.read()
+                        stderr_output = stderr_bytes.decode(errors="replace")
+                    except Exception:
+                        pass
+                raise AcpDaemonStartupError(
+                    f"Daemon exited with code {self._process.returncode}. "
+                    f"stdout: {''.join(captured_output)}, stderr: {stderr_output}"
+                )
+            
+            # Try to read a line with timeout
+            try:
+                remaining = deadline - time.monotonic()
+                line_bytes = await asyncio.wait_for(
+                    self._process.stdout.readline(),
+                    timeout=min(remaining, 1.0),
+                )
+            except asyncio.TimeoutError:
+                continue
+            
+            if not line_bytes:
+                # EOF
+                break
+            
+            line = line_bytes.decode(errors="replace").strip()
+            captured_output.append(line)
+            logger.debug(f"Daemon stdout: {line}")
+            
+            # Try to match the endpoint pattern
+            match = ENDPOINT_REGEX.search(line)
+            if match:
+                return match.group(1)
+        
+        raise AcpDaemonStartupError(
+            f"Endpoint discovery timeout after {self.startup_timeout}s. "
+            f"Captured output: {''.join(captured_output)}"
+        )
+    
+    async def _connect(self) -> None:
+        """
+        POST /api/v1/acp/connect to get connectionId and sessionToken.
+        """
+        assert self.base_url is not None
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{self.base_url}/connect",
+                json={},
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            self.connection_id = data["connectionId"]
+            self.session_token = data.get("sessionToken")
+    
+    async def _initialize(self) -> None:
+        """
+        Call JSON-RPC `initialize` and verify protocolVersion=1.
+        """
+        assert self.rpc_client is not None
+        
+        params = {
+            "protocolVersion": 1,
+            "clientCapabilities": {
+                "fs": {"readTextFile": False, "writeTextFile": False}
+            }
+        }
+        
+        result = None
+        async for event in self.rpc_client.call("initialize", params):
+            if "result" in event:
+                result = event["result"]
+                break
+            elif "error" in event:
+                error = event["error"]
+                raise AcpDaemonStartupError(f"initialize error: {error}")
+        
+        if result is None:
+            raise AcpDaemonStartupError("initialize did not return result")
+        
+        protocol_version = result.get("protocolVersion")
+        if protocol_version != 1:
+            raise AcpDaemonStartupError(
+                f"Unsupported protocol version: {protocol_version} (expected 1)"
+            )
+    
+    async def stop(self) -> None:
+        """
+        Gracefully stop the daemon (SIGTERM, wait 5s, SIGKILL).
+        """
+        async with self._lock:
+            await self._stop_locked()
+    
+    async def _stop_locked(self) -> None:
+        """Internal stop (must hold _lock)."""
+        if self._process is None:
             return
         
-        logger.info(f"Stopping daemon PID {self.state.pid}")
+        logger.info(f"Stopping daemon PID {self._process.pid}")
+        
+        # Close RPC client if present
+        if self.rpc_client is not None:
+            await self.rpc_client.close()
+            self.rpc_client = None
+        
+        # Graceful shutdown
+        await self._kill_process()
+        
+        self.base_url = None
+        self.connection_id = None
+        self.session_token = None
+    
+    async def _kill_process(self) -> None:
+        """Terminate the daemon process (SIGTERM, wait, SIGKILL)."""
+        if self._process is None:
+            return
         
         try:
-            self.state.process.terminate()
-            await asyncio.wait_for(self.state.process.wait(), timeout=5.0)
+            self._process.terminate()
+            await asyncio.wait_for(self._process.wait(), timeout=5.0)
         except asyncio.TimeoutError:
             logger.warning("Daemon did not terminate gracefully, killing")
-            self.state.process.kill()
-            await self.state.process.wait()
+            self._process.kill()
+            await self._process.wait()
+        except ProcessLookupError:
+            # Process already exited
+            pass
         
-        self.state.process = None
-        self.state.pid = None
+        self._process = None
     
-    async def _check_health(self) -> bool:
-        """
-        Check daemon health via GET /api/v1/health.
-
-        Real CodeBuddy daemon requires the `x-codebuddy-request: 1` header
-        on every /api/* call and wraps the payload as `{"data": {"status":
-        "ok", ...}}`. The fake serve fixture mirrors this shape, so we treat
-        either `data.status` or top-level `status` as the source of truth.
-
-        Returns True if healthy, False otherwise.
-        """
-        try:
-            async with httpx.AsyncClient(timeout=self.health_check_timeout) as client:
-                response = await client.get(
-                    f"{self.base_url}/api/v1/health",
-                    headers={"x-codebuddy-request": "1"},
-                )
-                if response.status_code == 200:
-                    payload = response.json() or {}
-                    inner = payload.get("data") if isinstance(payload, dict) else None
-                    if not isinstance(inner, dict):
-                        inner = payload if isinstance(payload, dict) else {}
-                    status_value = str(inner.get("status", "")).lower()
-                    if status_value in {"ok", "up"}:
-                        self.state.last_health_ok = time.time()
-                        self.state.last_error = None
-                        return True
-        except Exception as exc:
-            logger.debug(f"Health check failed: {exc}")
-
-        return False
-    
-    async def _is_healthy(self) -> bool:
-        """Check if daemon is running and healthy."""
-        if self.state.process is None:
-            return False
-        
-        # Check if process is still alive
-        if self.state.process.returncode is not None:
-            logger.warning(f"Daemon process exited with code {self.state.process.returncode}")
-            self.state.process = None
-            self.state.pid = None
-            return False
-        
-        return await self._check_health()
-    
-    async def shutdown(self) -> None:
-        """Gracefully shutdown the daemon."""
+    async def restart(self) -> None:
+        """Stop then start the daemon."""
         async with self._lock:
-            await self._stop_process()
+            await self._stop_locked()
+            await self._start_locked()
+    
+    async def health_check(self) -> bool:
+        """
+        Probe daemon health by re-issuing a cheap `initialize` RPC.
+        
+        Returns True if healthy, False otherwise. Updates _last_health_check
+        on success.
+        
+        Note: There is no /api/health endpoint on the real daemon. This
+        method uses initialize as a lightweight probe.
+        """
+        if not self.is_running:
+            return False
+        
+        try:
+            async for event in self.rpc_client.call("initialize", {"protocolVersion": 1}):
+                if "result" in event:
+                    self._last_health_check = time.time()
+                    return True
+                elif "error" in event:
+                    logger.warning(f"Health check failed: {event['error']}")
+                    return False
+        except Exception as exc:
+            logger.warning(f"Health check exception: {exc}")
+            return False
+        
+        return False
     
     def get_status(self) -> dict:
         """Get current daemon status for monitoring."""
         return {
-            "pid": self.state.pid,
-            "port": self.port,
-            "boot_count": self.state.boot_count,
-            "last_health_ok": self.state.last_health_ok,
-            "last_error": self.state.last_error,
-            "is_running": self.state.process is not None,
+            "is_running": self.is_running,
+            "base_url": self.base_url,
+            "connection_id": self.connection_id,
+            "last_health_check": self._last_health_check,
+            "pid": self._process.pid if self._process else None,
         }

@@ -1,204 +1,153 @@
 """
-ACP session management.
+High-level ACP session helpers.
 
-Handles JSON-RPC protocol handshake (initialize, session/new) and
-prompt submission with SSE event streaming.
+Wraps the low-level AcpJsonRpcClient with session lifecycle methods:
+- new() - create a session (session/new)
+- prompt() - submit a prompt and stream events (session/prompt)
+- close() - best-effort session cancel (session/cancel)
 """
 
 import logging
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Optional
 
-from kurumi_proxy.models import ChatMessage, TextContentBlock
-from kurumi_proxy.providers.codebuddy_acp.client import AcpClient
+from kurumi_proxy.providers.codebuddy_acp.client import AcpJsonRpcClient
 
 logger = logging.getLogger(__name__)
 
 
-def message_content_to_acp_prompt(message: ChatMessage) -> list[dict[str, Any]]:
-    """
-    Convert OpenAI chat message content to ACP prompt blocks.
-    
-    ACP prompt format:
-    [
-        {"type": "text", "text": "..."},
-        {"type": "image", "data": "...", "mimeType": "..."},
-        ...
-    ]
-    
-    Note: type is at top level, not nested under content.
-    """
-    content = message.content
-    
-    if content is None:
-        return []
-    
-    if isinstance(content, str):
-        return [{"type": "text", "text": content}]
-    
-    # List of content blocks
-    blocks = []
-    for block in content:
-        if isinstance(block, TextContentBlock):
-            blocks.append({"type": "text", "text": block.text})
-        else:
-            # Generic block - try to pass through
-            # For now, we only support text blocks
-            logger.warning(f"Unsupported content block type: {block.type}")
-    
-    return blocks
+class AcpAuthenticationRequiredError(Exception):
+    """Raised when session/new returns auth-required error."""
+    pass
 
 
-def build_acp_prompt(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+class AcpProtocolError(Exception):
+    """Raised on JSON-RPC protocol errors."""
+    pass
+
+
+class AcpUpstreamRefusalError(Exception):
     """
-    Build ACP prompt from OpenAI messages.
-    
-    For now, we flatten all messages into text blocks.
-    Future: support system messages, multi-turn, etc.
+    Raised when session/prompt returns stopReason="refusal" with an
+    upstream error message in _meta.codebuddy.ai/errorMessage.
     """
-    prompt_blocks = []
-    
-    for message in messages:
-        blocks = message_content_to_acp_prompt(message)
-        
-        # Add role prefix if not system (ACP handles system separately)
-        role_prefix = ""
-        if message.role == "user":
-            role_prefix = "User: "
-        elif message.role == "assistant":
-            role_prefix = "Assistant: "
-        elif message.role == "system":
-            role_prefix = "System: "
-        
-        # Combine with role prefix
-        for block in blocks:
-            if block["type"] == "text" and role_prefix:
-                block["text"] = role_prefix + block["text"]
-            prompt_blocks.append(block)
-    
-    return prompt_blocks
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
 
 
 class AcpSession:
     """
-    Manages an ACP session lifecycle.
+    High-level session manager for ACP.
     
-    Flow:
-    1. initialize() -> protocol handshake
-    2. new_session() -> create session
-    3. prompt() -> submit user prompt and stream events
+    Usage:
+        session = AcpSession(rpc_client)
+        session_id = await session.new(cwd="/tmp")
+        async for event in session.prompt(session_id, prompt_blocks):
+            # process event
+        await session.close(session_id)
     """
     
-    def __init__(self, client: AcpClient):
-        self.client = client
-        self.session_id: str | None = None
-        self._rpc_id = 0
+    def __init__(self, rpc_client: AcpJsonRpcClient):
+        self.client = rpc_client
     
-    def _next_rpc_id(self) -> int:
-        """Get next JSON-RPC request ID."""
-        self._rpc_id += 1
-        return self._rpc_id
-    
-    async def initialize(self) -> dict[str, Any]:
+    async def new(
+        self,
+        *,
+        cwd: str = "/tmp",
+        mcp_servers: Optional[list[dict[str, Any]]] = None,
+    ) -> str:
         """
-        Initialize ACP protocol.
+        Create a new ACP session.
         
-        JSON-RPC: {"method": "initialize", "params": {...}}
+        Args:
+            cwd: Working directory for the session
+            mcp_servers: Optional list of MCP server configs
         
-        Returns result with agentCapabilities, protocolVersion, etc.
+        Returns:
+            sessionId string
+        
+        Raises:
+            AcpAuthenticationRequiredError: if daemon is not authenticated
+            AcpProtocolError: on other JSON-RPC errors
         """
-        logger.debug("Initializing ACP protocol")
-        
-        params = {
-            "protocolVersion": 1,
-            "clientCapabilities": {},
-        }
-        
-        result = None
-        async for message in self.client.json_rpc_request(
-            method="initialize",
-            params=params,
-            rpc_id=self._next_rpc_id(),
-        ):
-            if "result" in message:
-                result = message["result"]
-                logger.info(f"ACP initialized: protocol v{result.get('protocolVersion')}")
-                break
-            elif "error" in message:
-                error = message["error"]
-                raise RuntimeError(f"ACP initialize error: {error}")
-        
-        if result is None:
-            raise RuntimeError("ACP initialize did not return result")
-        
-        return result
-    
-    async def new_session(self, cwd: str = "/tmp") -> dict[str, Any]:
-        """
-        Create new ACP session.
-        
-        JSON-RPC: {"method": "session/new", "params": {"cwd": "...", ...}}
-        
-        Returns result with sessionId, models, modes, etc.
-        """
-        logger.debug("Creating new ACP session")
-        
         params = {
             "cwd": cwd,
-            "mcpServers": [],
+            "mcpServers": mcp_servers or [],
         }
         
-        result = None
-        async for message in self.client.json_rpc_request(
-            method="session/new",
-            params=params,
-            rpc_id=self._next_rpc_id(),
-        ):
-            # Skip session/update notifications
-            if message.get("method") == "session/update":
+        logger.debug(f"Creating new ACP session (cwd={cwd})")
+        
+        async for event in self.client.call("session/new", params):
+            # Skip session/update notifications (config options, etc.)
+            if event.get("method") == "session/update":
                 continue
             
-            if "result" in message:
-                result = message["result"]
-                self.session_id = result["sessionId"]
-                logger.info(f"Session created: {self.session_id}")
-                break
-            elif "error" in message:
-                error = message["error"]
-                raise RuntimeError(f"ACP session/new error: {error}")
+            # Check for result
+            if "result" in event:
+                result = event["result"]
+                session_id = result.get("sessionId")
+                if not session_id:
+                    raise AcpProtocolError(f"session/new result missing sessionId: {result}")
+                logger.info(f"Session created: {session_id}")
+                return session_id
+            
+            # Check for error
+            if "error" in event:
+                error = event["error"]
+                error_data = error.get("data", {})
+                
+                # Check for auth-required error
+                if isinstance(error_data, dict) and error_data.get("category") == "auth":
+                    raise AcpAuthenticationRequiredError(
+                        "CodeBuddy ACP daemon is not authenticated. "
+                        "Run `codebuddy -p \"hi\"` once with CODEBUDDY_API_KEY set, "
+                        "then restart Kurumi Proxy."
+                    )
+                
+                raise AcpProtocolError(f"session/new error: {error}")
         
-        if result is None:
-            raise RuntimeError("ACP session/new did not return result")
-        
-        return result
+        raise AcpProtocolError("session/new did not return result")
     
     async def prompt(
         self,
-        messages: list[ChatMessage],
+        session_id: str,
+        prompt_blocks: list[dict[str, Any]],
     ) -> AsyncIterator[dict[str, Any]]:
         """
-        Submit prompt and stream session/update events.
+        Submit a prompt and stream all events (notifications + result).
         
-        JSON-RPC: {"method": "session/prompt", "params": {"sessionId": "...", "prompt": [...]}}
+        Args:
+            session_id: Session ID from new()
+            prompt_blocks: List of prompt blocks, e.g.,
+                [{"type": "text", "text": "Hello"}]
         
         Yields:
-        - session/update notifications (agent_message_chunk, tool_call, etc.)
-        - Final result with stopReason, usage, etc.
+            All SSE events: session/update notifications and the final
+            result event with stopReason.
         """
-        if self.session_id is None:
-            raise RuntimeError("No active session - call new_session() first")
-        
-        logger.debug(f"Submitting prompt to session {self.session_id}")
-        
-        prompt_blocks = build_acp_prompt(messages)
-        
         params = {
-            "sessionId": self.session_id,
+            "sessionId": session_id,
             "prompt": prompt_blocks,
         }
         
-        async for message in self.client.json_rpc_request(
-            method="session/prompt",
-            params=params,
-            rpc_id=self._next_rpc_id(),
-        ):
-            yield message
+        logger.debug(f"Submitting prompt to session {session_id}")
+        
+        async for event in self.client.call("session/prompt", params):
+            yield event
+    
+    async def close(self, session_id: str) -> None:
+        """
+        Best-effort session cancel (session/cancel).
+        
+        Silently ignores errors since this is cleanup.
+        """
+        try:
+            async for event in self.client.call(
+                "session/cancel",
+                {"sessionId": session_id},
+                timeout=5.0,
+            ):
+                # Drain the stream
+                pass
+        except Exception as exc:
+            logger.debug(f"session/cancel failed (ignored): {exc}")

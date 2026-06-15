@@ -142,21 +142,33 @@ class AcpDaemon:
     async def _check_health(self) -> bool:
         """
         Check daemon health via GET /api/v1/health.
-        
+
+        Real CodeBuddy daemon requires the `x-codebuddy-request: 1` header
+        on every /api/* call and wraps the payload as `{"data": {"status":
+        "ok", ...}}`. The fake serve fixture mirrors this shape, so we treat
+        either `data.status` or top-level `status` as the source of truth.
+
         Returns True if healthy, False otherwise.
         """
         try:
             async with httpx.AsyncClient(timeout=self.health_check_timeout) as client:
-                response = await client.get(f"{self.base_url}/api/v1/health")
+                response = await client.get(
+                    f"{self.base_url}/api/v1/health",
+                    headers={"x-codebuddy-request": "1"},
+                )
                 if response.status_code == 200:
-                    data = response.json()
-                    if data.get("status") == "UP":
+                    payload = response.json() or {}
+                    inner = payload.get("data") if isinstance(payload, dict) else None
+                    if not isinstance(inner, dict):
+                        inner = payload if isinstance(payload, dict) else {}
+                    status_value = str(inner.get("status", "")).lower()
+                    if status_value in {"ok", "up"}:
                         self.state.last_health_ok = time.time()
                         self.state.last_error = None
                         return True
         except Exception as exc:
             logger.debug(f"Health check failed: {exc}")
-        
+
         return False
     
     async def _is_healthy(self) -> bool:

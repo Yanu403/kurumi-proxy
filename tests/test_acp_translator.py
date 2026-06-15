@@ -250,9 +250,11 @@ def test_extract_stop_reason():
     result = {"result": {"stopReason": "cancelled"}}
     assert extract_stop_reason(result) == "stop"
     
-    # refusal -> stop
+    # refusal -> content_filter (upstream auth/safety refusals are surfaced
+    # separately as HTTP 502 by the chat handler; the OpenAI-shape finish
+    # reason for the underlying choice should reflect the filter, not stop)
     result = {"result": {"stopReason": "refusal"}}
-    assert extract_stop_reason(result) == "stop"
+    assert extract_stop_reason(result) == "content_filter"
     
     # max_tokens -> length
     result = {"result": {"stopReason": "max_tokens"}}

@@ -28,10 +28,51 @@ logger = logging.getLogger(__name__)
 STOP_REASON_MAP = {
     "end_turn": "stop",
     "cancelled": "stop",
-    "refusal": "stop",
+    # `refusal` arrives both for safety refusals and for upstream auth/credit
+    # errors (the daemon embeds the upstream message under
+    # `_meta["codebuddy.ai/errorMessage"]`). Map it to `content_filter` for
+    # the OpenAI shape; the chat_completions_acp handler is also expected to
+    # surface refusals carrying upstream `category=auth` errors as HTTP 502.
+    "refusal": "content_filter",
     "max_tokens": "length",
     "tool_use": "tool_calls",
 }
+
+
+def extract_upstream_error(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Surface upstream daemon errors hidden in ACP `_meta`.
+
+    The CodeBuddy daemon's `result.stopReason="refusal"` payload carries a
+    JSON-encoded blob under `_meta["codebuddy.ai/errorMessage"]` that mirrors
+    the JSON-RPC error shape: `{"code", "message", "data": {...}}`. The
+    `data.category` field is `"auth"` for missing/invalid CodeBuddy access
+    tokens and `"quota"` / `"rate_limit"` for throttling.
+
+    Returns the parsed error dict when present, otherwise None.
+    """
+    if "result" not in result:
+        return None
+    payload = result["result"]
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("stopReason") != "refusal":
+        return None
+    meta = payload.get("_meta")
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("codebuddy.ai/errorMessage")
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            decoded = json.loads(raw)
+            if isinstance(decoded, dict):
+                return decoded
+        except json.JSONDecodeError:
+            return {"message": raw, "data": {"category": "unknown"}}
+    return None
 
 
 def process_agent_message_chunk(update: dict[str, Any]) -> str | None:
@@ -363,6 +404,7 @@ async def collect_openai_completion(
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
     finish_reason = "stop"
+    upstream_error: dict[str, Any] | None = None
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     
     async for message in acp_events:
@@ -409,16 +451,17 @@ async def collect_openai_completion(
         # Handle result (final response)
         if "result" in message:
             finish_reason = extract_stop_reason(message)
-            
+            upstream_error = extract_upstream_error(message)
+
             # Extract usage if available
             result_usage = extract_usage_from_result(message)
             if result_usage:
                 usage = result_usage
-            
+
             # Check for tool calls
             if tool_accumulator.calls:
                 finish_reason = "tool_calls"
-            
+
             break
         
         # Handle error
@@ -472,5 +515,11 @@ async def collect_openai_completion(
         "choices": [choice],
         "usage": usage,
     }
-    
+
+    # Surface upstream errors out-of-band so the FastAPI layer can decide
+    # whether to convert them to HTTP 502 instead of returning a fake-success
+    # body. Callers that don't care can ignore this key.
+    if upstream_error is not None:
+        response["_upstream_error"] = upstream_error
+
     return response

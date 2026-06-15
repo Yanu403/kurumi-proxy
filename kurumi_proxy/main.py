@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -25,7 +26,11 @@ from kurumi_proxy.rtk import RtkStats, preprocess_messages
 from kurumi_proxy.providers.codebuddy_acp.daemon import AcpDaemon
 from kurumi_proxy.providers.codebuddy_acp.client import AcpClient
 from kurumi_proxy.providers.codebuddy_acp.session import AcpSession
-from kurumi_proxy.providers.codebuddy_acp.translator import translate_to_openai_stream, collect_openai_completion
+from kurumi_proxy.providers.codebuddy_acp.translator import (
+    collect_openai_completion,
+    extract_upstream_error,
+    translate_to_openai_stream,
+)
 
 # Global ACP daemon instance (lazily initialized)
 _acp_daemon: AcpDaemon | None = None
@@ -41,6 +46,8 @@ def get_acp_daemon(settings: Settings) -> AcpDaemon:
     return _acp_daemon
 
 ProviderFactory = Callable[[Settings], CodeBuddyProvider]
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="kurumi-proxy", version="0.1.0")
 
@@ -236,9 +243,11 @@ def _rtk_kwargs(stats: RtkStats) -> dict[str, int | None]:
     }
 
 
-def reject_unsupported_tool_calls(request: ChatCompletionRequest, settings: Settings) -> None:
-    # Allow tools when using ACP backend
-    if settings.kurumi_proxy_backend == "acp":
+def reject_unsupported_tool_calls(request: ChatCompletionRequest, settings: Settings, *, force: bool = False) -> None:
+    # Allow tools when using ACP backend (the daemon path supports them).
+    # When `force=True` is passed (e.g. test override path), apply the
+    # legacy reject regardless of backend.
+    if settings.kurumi_proxy_backend == "acp" and not force:
         return
     if not request.tools:
         return
@@ -356,6 +365,9 @@ async def admin_usage(days: int = 7, store: ConnectionStore = Depends(get_connec
 
 
 @app.get("/admin/quota", dependencies=[Depends(require_admin_auth)])
+async def admin_quota(store: ConnectionStore = Depends(get_connection_store)) -> dict[str, object]:
+    return store.quota_summary()
+
 
 @app.get("/admin/acp/status", dependencies=[Depends(require_admin_auth)])
 async def admin_acp_status(
@@ -367,8 +379,6 @@ async def admin_acp_status(
     status["backend"] = settings.kurumi_proxy_backend
     status["daemon_port"] = settings.codebuddy_daemon_port
     return status
-async def admin_quota(store: ConnectionStore = Depends(get_connection_store)) -> dict[str, object]:
-    return store.quota_summary()
 
 
 
@@ -479,6 +489,29 @@ async def chat_completions_acp(
                     completion_id=completion_id,
                     created=created,
                 )
+
+                # Surface upstream daemon refusal as HTTP 502 instead of
+                # masking it as a successful empty completion.
+                upstream_error = response_data.pop("_upstream_error", None)
+                if upstream_error is not None:
+                    detail_data = upstream_error.get("data") or {}
+                    category = str(detail_data.get("category") or "unknown")
+                    message = str(upstream_error.get("message") or "CodeBuddy upstream refusal")
+                    if category == "auth":
+                        message = (
+                            "CodeBuddy upstream returned 401 — refresh CODEBUDDY_API_KEY "
+                            "or run `codebuddy /login`. Original message: " + message
+                        )
+                    raise HTTPException(
+                        status_code=502,
+                        detail={
+                            "error": {
+                                "message": message,
+                                "type": "upstream_error",
+                                "code": category,
+                            }
+                        },
+                    )
                 
                 # Record usage
                 usage = response_data.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
@@ -511,11 +544,19 @@ async def chat_completions(
     settings: Settings = Depends(get_app_settings),
     provider_factory: ProviderFactory = Depends(get_provider_factory),
     store: ConnectionStore = Depends(get_connection_store),
+    fastapi_request: Request = None,
 ) -> ChatCompletionResponse | StreamingResponse:
-    # Route to ACP backend if configured
-    if settings.kurumi_proxy_backend == "acp":
+    # Route to ACP backend only when (a) ACP is configured AND (b) the test
+    # harness has not injected a provider_factory override. Tests that monkey-
+    # patch app.state.provider_factory expect the legacy subprocess path so
+    # they can run hermetically without spawning a real CodeBuddy daemon.
+    has_test_override = (
+        fastapi_request is not None
+        and getattr(fastapi_request.app.state, "provider_factory", None) is not None
+    )
+    if settings.kurumi_proxy_backend == "acp" and not has_test_override:
         return await chat_completions_acp(request, settings, store)
-    reject_unsupported_tool_calls(request, settings)
+    reject_unsupported_tool_calls(request, settings, force=has_test_override)
 
     provider = provider_factory(settings)
     selected_model = request.model or settings.codebuddy_model

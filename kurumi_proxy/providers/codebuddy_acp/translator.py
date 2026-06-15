@@ -131,14 +131,28 @@ def check_upstream_refusal(result: dict[str, Any]) -> str | None:
     
     error_message = meta.get("codebuddy.ai/errorMessage")
     if error_message:
-        # error_message might be a JSON string or already parsed
+        # error_message might be a JSON string or already parsed.
+        # Real shape from upstream:
+        #   {"code":-32603,"message":"Internal error",
+        #    "data":{"details":"<actual human message>","statusCode":400,...}}
+        # Prefer data.details (the human-readable upstream error) over
+        # the generic outer "Internal error".
         if isinstance(error_message, str):
             try:
                 parsed = json.loads(error_message)
-                if isinstance(parsed, dict):
-                    return parsed.get("message", error_message)
             except json.JSONDecodeError:
-                pass
+                return error_message
+            if isinstance(parsed, dict):
+                data = parsed.get("data")
+                if isinstance(data, dict):
+                    details = data.get("details")
+                    if isinstance(details, str) and details:
+                        return details
+                msg = parsed.get("message")
+                if isinstance(msg, str) and msg:
+                    return msg
+                return error_message
+            return error_message
         return str(error_message)
     
     return None

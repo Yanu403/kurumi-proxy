@@ -87,13 +87,18 @@ class AcpDaemon:
         
         try:
             # Spawn: codebuddy --acp --acp-transport streamable-http -y
+            #
+            # NOTE: The daemon emits its endpoint announcement
+            # ("ACP streamable-http endpoint: http://127.0.0.1:<PORT>/api/v1/acp")
+            # to STDERR, not stdout. We merge stderr into stdout so we can
+            # use a single reader to discover the endpoint.
             self._process = await asyncio.create_subprocess_exec(
                 self.codebuddy_bin,
                 "--acp",
                 "--acp-transport", "streamable-http",
                 "-y",  # dangerously-skip-permissions
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
             )
             
             pid = self._process.pid
@@ -141,16 +146,11 @@ class AcpDaemon:
         while time.monotonic() < deadline:
             # Check if process exited
             if self._process.returncode is not None:
-                stderr_output = ""
-                if self._process.stderr:
-                    try:
-                        stderr_bytes = await self._process.stderr.read()
-                        stderr_output = stderr_bytes.decode(errors="replace")
-                    except Exception:
-                        pass
+                # stderr was merged into stdout, so any error output is
+                # already in captured_output.
                 raise AcpDaemonStartupError(
                     f"Daemon exited with code {self._process.returncode}. "
-                    f"stdout: {''.join(captured_output)}, stderr: {stderr_output}"
+                    f"output: {''.join(captured_output)}"
                 )
             
             # Try to read a line with timeout

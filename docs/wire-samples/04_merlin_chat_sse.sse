@@ -1,0 +1,23 @@
+event: progress
+data: {"payload":{"name":"Flow","icon":"LIGHTBULB"},"metadata":{"type":"HEADING"}}
+
+event: chatTitle
+data: {"title":"Greeting and Saying Hello"}
+
+event: message
+data: {"data":{"content":"","index":1,"type":"text","text":"Hello"}}
+
+event: message
+data: {"data":{"content":"","index":1,"type":"text","text":"! How can I help you today?"}}
+
+event: attachments
+data: {"payload":[]}
+
+event: references
+data: {"payload":[]}
+
+event: usage
+data: {"features":{"merlin":{"usage":1,"limit":30}},"cost":{"dailyUsage":{"usage":0.00007752,"limit":1}},"userPlan":"GUEST"}
+
+event: message
+data: {"status":"system","data":{"content":" ","eventType":"DONE"}}

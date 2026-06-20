@@ -262,14 +262,27 @@ def parse_sse_event(data: str) -> dict | str | None:
 def extract_content(event: dict | str) -> str:
     """Best-effort extraction of incremental text from one SSE event.
 
-    Handles the shapes we expect from an OpenAI-ish stream plus Merlin's own
-    nesting. Unknown shapes contribute empty string rather than raising, so a
-    single surprising event never kills the whole stream.
+    Handles both OpenAI-style shapes and Merlin's own nesting where content
+    lives at ``data.data.text``. Unknown shapes contribute empty string rather
+    than raising, so a single surprising event never kills the whole stream.
     """
     if isinstance(event, str):
         return "" if event == "[DONE]" else event
     if not isinstance(event, dict):
         return ""
+
+    # Merlin format: {"data":{"content":"","index":1,"type":"text","text":"Hello"}}
+    inner = event.get("data")
+    if isinstance(inner, dict):
+        # Skip DONE signals
+        if inner.get("eventType") == "DONE":
+            return ""
+        text = inner.get("text")
+        if isinstance(text, str) and text:
+            return text
+        content = inner.get("content")
+        if isinstance(content, str) and content:
+            return content
 
     # OpenAI-style: choices[0].delta.content
     choices = event.get("choices")
@@ -292,34 +305,38 @@ def extract_content(event: dict | str) -> str:
         if isinstance(value, str) and value:
             return value
         if isinstance(value, dict):
-            inner = value.get("content") or value.get("text")
-            if isinstance(inner, str):
-                return inner
+            inner2 = value.get("content") or value.get("text")
+            if isinstance(inner2, str):
+                return inner2
     return ""
 
 
-async def iter_sse_lines(line_iter: AsyncIterator[str]) -> AsyncIterator[str]:
-    """Yield the ``data:`` payloads from an SSE byte/text stream.
+async def iter_sse_events(line_iter: AsyncIterator[str]) -> AsyncIterator[tuple[str, str]]:
+    """Yield ``(event_type, data_payload)`` tuples from an SSE stream.
 
     ``line_iter`` yields text lines (already decoded). Events are separated by
-    blank lines; we only care about ``data:`` fields, which we concatenate per
-    event (multi-line data is allowed by the SSE spec). The leading ``data:``
-    and optional single space are stripped per the SSE spec.
+    blank lines. Each event may have an ``event:`` field (defaults to
+    ``"message"`` per the SSE spec) and one or more ``data:`` fields which are
+    concatenated.
     """
+    event_type = "message"
     data_lines: list[str] = []
     async for line in line_iter:
         line = line.rstrip("\r\n")
-        if line.startswith("data:"):
+        if line.startswith("event:"):
+            event_type = line[len("event:"):].strip()
+        elif line.startswith("data:"):
             payload = line[len("data:"):]
             if payload.startswith(" "):
                 payload = payload[1:]
             data_lines.append(payload)
-        if line == "":
+        elif line == "":
             if data_lines:
-                yield "\n".join(data_lines)
+                yield event_type, "\n".join(data_lines)
                 data_lines = []
+                event_type = "message"
     if data_lines:
-        yield "\n".join(data_lines)
+        yield event_type, "\n".join(data_lines)
 
 
 # ---------------------------------------------------------------------------
@@ -516,20 +533,33 @@ class MerlinProvider(BaseProvider):
     async def _parse_stream(self, resp: httpx.Response, model: str) -> AsyncIterator[StreamDelta]:
         """Parse the SSE response into ``StreamDelta`` chunks."""
         debug_count = 0
-        async for raw in iter_sse_lines(_line_iter(resp)):
+        async for event_type, raw in iter_sse_events(_line_iter(resp)):
             event = parse_sse_event(raw)
             if event is None:
                 continue
             if debug_count < 5:
-                logger.debug("merlin sse[%d]: %r", debug_count, raw[:300])
+                logger.debug("merlin sse[%d] event=%s: %r", debug_count, event_type, raw[:300])
                 debug_count += 1
+            # Merlin DONE: {"status":"system","data":{"eventType":"DONE"}}
+            if event_type == "message" and isinstance(event, dict):
+                inner = event.get("data")
+                if isinstance(inner, dict) and inner.get("eventType") == "DONE":
+                    yield StreamDelta(model=model, finish_reason="stop")
+                    return
             if event == "[DONE]":
                 yield StreamDelta(model=model, finish_reason="stop")
                 return
+            # Handle Merlin error events
+            if event_type == "error" and isinstance(event, dict):
+                msg = event.get("message", "Unknown Merlin error")
+                raise ProviderBadGatewayError(f"Merlin error: {msg}")
+            # Only extract content from "message" events (skip progress, chatTitle, usage, etc.)
+            if event_type != "message":
+                continue
             text = extract_content(event)
             if text:
                 yield StreamDelta(text=text, model=model)
-        # Stream ended without an explicit [DONE]; still signal completion.
+        # Stream ended without an explicit DONE; still signal completion.
         yield StreamDelta(model=model, finish_reason="stop")
 
 

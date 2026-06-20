@@ -1,0 +1,601 @@
+[
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://www.getmerlin.in/arcane/api/v2/thread/unified",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Authorization": "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6ImVlOTA0NmVhZDJlMDUwMDAxMGVkNTA0M2I0ODNkODRiMGM1MmM3YzQiLCJ0eXAiOiJKV1QifQ.eyJwcm92aWRlcl9pZCI6ImFub255bW91cyIsImlzcyI6Imh0dHBzOi8vc2VjdXJldG9rZW4uZ29vZ2xlLmNvbS9mb3llci13b3JrIiwiYXVkIjoiZm95ZXItd29yayIsImF1dGhfdGltZSI6MTc4MTk2NDUzNSwidXNlcl9pZCI6IkpaSEVSWWNiTkZia2ZNMHdrS0RGNGJ6aFc0MjIiLCJzdWIiOiJKWkhFUlljYk5GYmtmTTB3a0tERjRiemhXNDIyIiwiaWF0IjoxNzgxOTY0NTM1LCJleHAiOjE3ODE5NjgxMzUsImZpcmViYXNlIjp7ImlkZW50aXRpZXMiOnt9LCJzaWduX2luX3Byb3ZpZGVyIjoiYW5vbnltb3VzIn19.IQj2eqBAhtlRGq5QmJsMmw2P8t2DeSRmdsy4vl3fCEHFfouNYwozTSS8oQ9QUNOlTKHaCRqpvYynjwujE2K5zaZd5e-16ogf6oh5RKQQE5ETagTTYRVU-T_JlQYPjlNUDIZ2-a-oZW17sPO9ESn96S2M6Akgh_oC-5-TJr3RkBHrg_UxxKaT3eFKNDybcbELNrJf3RLyDQ9DiJTECsFrvvvv1iVoHE3101BH93uaWXl0ynAeLBm5SHm1gW2953MaW8-gUw7bchZSDHyJt-halcgbF9CFYoN3sxdS0zQiCpu6CM8pozLhMFBtDyX2102VlFp3ZISeFHTO5piG1EVnyA",
+      "x-request-timestamp": "2026-06-20T21:09:08.152+07:00[Asia/Jakarta]",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "Accept-Language": "en-US",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "sec-ch-ua-mobile": "?0",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "Accept": "text/event-stream, text/event-stream",
+      "Content-Type": "application/json",
+      "x-merlin-version": "web-merlin"
+    },
+    "postData": "{\"attachments\":[],\"chatId\":\"07828788-e859-435f-8442-10b13f3bbc81\",\"language\":\"AUTO\",\"message\":{\"childId\":\"ba8e28fa-78db-411b-8e63-834c28c06300\",\"content\":\"Reply with just 'hello' (one word)\",\"context\":\"\",\"id\":\"6bc8fb2d-1f94-48ca-ada5-51e1d7777bba\",\"parentId\":\"root\"},\"mode\":\"UNIFIED_CHAT\",\"model\":\"gemini-2.5-flash-lite\",\"metadata\":{\"noTask\":true,\"isWebpageChat\":false,\"deepResearch\":false,\"webAccess\":true,\"proFinderMode\":false,\"mcpConfig\":{\"isEnabled\":false},\"merlinMagic\":false}}",
+    "timestamp": 1781964548.198692
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/id/chat/07828788-e859-435f-8442-10b13f3bbc81?_rsc=zar7x",
+    "headers": {
+      "RSC": "1",
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "Accept-Language": "en-US",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "sec-ch-ua-mobile": "?0",
+      "Next-Router-State-Tree": "%5B%22%22%2C%7B%22children%22%3A%5B%5B%22lang%22%2C%22id%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22(pagesWithAuthAccess)%22%2C%7B%22children%22%3A%5B%22(privateRoutes)%22%2C%7B%22children%22%3A%5B%22(withLeftSidebar)%22%2C%7B%22children%22%3A%5B%22(withChatFooter)%22%2C%7B%22children%22%3A%5B%22chat%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2C%22%2Fid%2Fchat%22%2C%22refresh%22%5D%7D%5D%7D%5D%7D%5D%7D%5D%7D%5D%7D%2Cnull%2Cnull%2Ctrue%5D%7D%5D",
+      "Next-Url": "/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "x-deployment-id": "dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT"
+    },
+    "postData": "",
+    "timestamp": 1781964548.1991644
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/73ec380b-58af342d22b46dda.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7343678
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/7bf36345-09b4440383415f5e.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7345736
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/b6b9d1ec-1d60a4ae5afe2bea.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7347388
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/8bb4d8db-9d2bc8fd8adc400f.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7351942
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/db261188-ede4e062eb94d0c9.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7354145
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/36924-841e9cc6bb330472.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.735568
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/26372-ba525ce5c3492555.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7357159
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/13712-9b0b7f0485152b07.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7358968
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/34116-c2e8b9f2f6ba0da0.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7360663
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/88883-18bca68d4bfbb83b.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.736226
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/52198-0d42e3358b886f0f.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.736389
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/80933-84ea064ad8f7844a.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7365415
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/59241-02eb891624cfb41f.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7366939
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/83801-65f8df57f23595ca.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7368839
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/13614-f9d4c9dd45403e8b.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7370398
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/60919-151c137dce8c9dee.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7372153
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/54349-d212de5762b8bfe1.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.737387
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/13188-cd69f75cd46aad29.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7375467
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/65445-65fd0b75a9f344bd.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7376964
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/58859-e8df2399e8ca309b.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7378798
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/50752-569a5def6458def7.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7392755
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/5505-fdb1dd1fec46080b.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7395394
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/5311-d86404c7f78e4623.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7399461
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/app/%5Blang%5D/(pagesWithAuthAccess)/(privateRoutes)/(withLeftSidebar)/(withChatFooter)/chat/%5B...chatId%5D/page-c7bd9fc365142c7b.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7403243
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/91117-aa1d4949ee2047dd.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7405171
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/app/%5Blang%5D/(pagesWithAuthAccess)/(privateRoutes)/(withLeftSidebar)/(withChatFooter)/chat/%5B...chatId%5D/error-6710fa71e4de5593.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7407236
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/12259-58c75281e7dd01cf.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7408988
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/chunks/app/%5Blang%5D/(pagesWithAuthAccess)/(privateRoutes)/(withLeftSidebar)/(withChatFooter)/chat/%5B...chatId%5D/loading-8f31f542efbd6c8c.js?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964548.7412431
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/css/9cdabb096603b4fc.css?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964549.1345522
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/css/3864b451a61e4546.css?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964549.5241644
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/_next/static/css/e5a493e03eba197e.css?dpl=dpl_7CgiFoJs4KiD4GtCUMaWU3dvHPwT",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964549.5246267
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/arcane/api/v1/user/survey/survey-events",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Authorization": "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6ImVlOTA0NmVhZDJlMDUwMDAxMGVkNTA0M2I0ODNkODRiMGM1MmM3YzQiLCJ0eXAiOiJKV1QifQ.eyJwcm92aWRlcl9pZCI6ImFub255bW91cyIsImlzcyI6Imh0dHBzOi8vc2VjdXJldG9rZW4uZ29vZ2xlLmNvbS9mb3llci13b3JrIiwiYXVkIjoiZm95ZXItd29yayIsImF1dGhfdGltZSI6MTc4MTk2NDUzNSwidXNlcl9pZCI6IkpaSEVSWWNiTkZia2ZNMHdrS0RGNGJ6aFc0MjIiLCJzdWIiOiJKWkhFUlljYk5GYmtmTTB3a0tERjRiemhXNDIyIiwiaWF0IjoxNzgxOTY0NTM1LCJleHAiOjE3ODE5NjgxMzUsImZpcmViYXNlIjp7ImlkZW50aXRpZXMiOnt9LCJzaWduX2luX3Byb3ZpZGVyIjoiYW5vbnltb3VzIn19.IQj2eqBAhtlRGq5QmJsMmw2P8t2DeSRmdsy4vl3fCEHFfouNYwozTSS8oQ9QUNOlTKHaCRqpvYynjwujE2K5zaZd5e-16ogf6oh5RKQQE5ETagTTYRVU-T_JlQYPjlNUDIZ2-a-oZW17sPO9ESn96S2M6Akgh_oC-5-TJr3RkBHrg_UxxKaT3eFKNDybcbELNrJf3RLyDQ9DiJTECsFrvvvv1iVoHE3101BH93uaWXl0ynAeLBm5SHm1gW2953MaW8-gUw7bchZSDHyJt-halcgbF9CFYoN3sxdS0zQiCpu6CM8pozLhMFBtDyX2102VlFp3ZISeFHTO5piG1EVnyA",
+      "x-request-timestamp": "2026-06-20T21:09:03.402+07:00[Asia/Jakarta]",
+      "Referer": "https://www.getmerlin.in/id/chat/07828788-e859-435f-8442-10b13f3bbc81",
+      "Accept-Language": "en-US",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "sec-ch-ua-mobile": "?0",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "Accept": "application/json, text/plain, */*",
+      "Content-Type": "application/json",
+      "x-merlin-version": "web-merlin"
+    },
+    "postData": "",
+    "timestamp": 1781964549.617434
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/arcane/api/v1/user/folders/get-pinned-chats",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Authorization": "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6ImVlOTA0NmVhZDJlMDUwMDAxMGVkNTA0M2I0ODNkODRiMGM1MmM3YzQiLCJ0eXAiOiJKV1QifQ.eyJwcm92aWRlcl9pZCI6ImFub255bW91cyIsImlzcyI6Imh0dHBzOi8vc2VjdXJldG9rZW4uZ29vZ2xlLmNvbS9mb3llci13b3JrIiwiYXVkIjoiZm95ZXItd29yayIsImF1dGhfdGltZSI6MTc4MTk2NDUzNSwidXNlcl9pZCI6IkpaSEVSWWNiTkZia2ZNMHdrS0RGNGJ6aFc0MjIiLCJzdWIiOiJKWkhFUlljYk5GYmtmTTB3a0tERjRiemhXNDIyIiwiaWF0IjoxNzgxOTY0NTM1LCJleHAiOjE3ODE5NjgxMzUsImZpcmViYXNlIjp7ImlkZW50aXRpZXMiOnt9LCJzaWduX2luX3Byb3ZpZGVyIjoiYW5vbnltb3VzIn19.IQj2eqBAhtlRGq5QmJsMmw2P8t2DeSRmdsy4vl3fCEHFfouNYwozTSS8oQ9QUNOlTKHaCRqpvYynjwujE2K5zaZd5e-16ogf6oh5RKQQE5ETagTTYRVU-T_JlQYPjlNUDIZ2-a-oZW17sPO9ESn96S2M6Akgh_oC-5-TJr3RkBHrg_UxxKaT3eFKNDybcbELNrJf3RLyDQ9DiJTECsFrvvvv1iVoHE3101BH93uaWXl0ynAeLBm5SHm1gW2953MaW8-gUw7bchZSDHyJt-halcgbF9CFYoN3sxdS0zQiCpu6CM8pozLhMFBtDyX2102VlFp3ZISeFHTO5piG1EVnyA",
+      "x-request-timestamp": "2026-06-20T21:09:03.402+07:00[Asia/Jakarta]",
+      "Referer": "https://www.getmerlin.in/id/chat/07828788-e859-435f-8442-10b13f3bbc81",
+      "Accept-Language": "en-US",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "sec-ch-ua-mobile": "?0",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "Accept": "application/json, text/plain, */*",
+      "Content-Type": "application/json",
+      "x-merlin-version": "web-merlin"
+    },
+    "postData": "",
+    "timestamp": 1781964549.6175928
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://www.getmerlin.in/favicon.ico",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Referer": "https://www.getmerlin.in/id/chat/07828788-e859-435f-8442-10b13f3bbc81",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "Accept-Language": "en-US",
+      "sec-ch-ua-mobile": "?0"
+    },
+    "postData": "",
+    "timestamp": 1781964549.651528
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://www.getmerlin.in/arcane/api/v1/user/history",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Authorization": "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6ImVlOTA0NmVhZDJlMDUwMDAxMGVkNTA0M2I0ODNkODRiMGM1MmM3YzQiLCJ0eXAiOiJKV1QifQ.eyJwcm92aWRlcl9pZCI6ImFub255bW91cyIsImlzcyI6Imh0dHBzOi8vc2VjdXJldG9rZW4uZ29vZ2xlLmNvbS9mb3llci13b3JrIiwiYXVkIjoiZm95ZXItd29yayIsImF1dGhfdGltZSI6MTc4MTk2NDUzNSwidXNlcl9pZCI6IkpaSEVSWWNiTkZia2ZNMHdrS0RGNGJ6aFc0MjIiLCJzdWIiOiJKWkhFUlljYk5GYmtmTTB3a0tERjRiemhXNDIyIiwiaWF0IjoxNzgxOTY0NTM1LCJleHAiOjE3ODE5NjgxMzUsImZpcmViYXNlIjp7ImlkZW50aXRpZXMiOnt9LCJzaWduX2luX3Byb3ZpZGVyIjoiYW5vbnltb3VzIn19.IQj2eqBAhtlRGq5QmJsMmw2P8t2DeSRmdsy4vl3fCEHFfouNYwozTSS8oQ9QUNOlTKHaCRqpvYynjwujE2K5zaZd5e-16ogf6oh5RKQQE5ETagTTYRVU-T_JlQYPjlNUDIZ2-a-oZW17sPO9ESn96S2M6Akgh_oC-5-TJr3RkBHrg_UxxKaT3eFKNDybcbELNrJf3RLyDQ9DiJTECsFrvvvv1iVoHE3101BH93uaWXl0ynAeLBm5SHm1gW2953MaW8-gUw7bchZSDHyJt-halcgbF9CFYoN3sxdS0zQiCpu6CM8pozLhMFBtDyX2102VlFp3ZISeFHTO5piG1EVnyA",
+      "x-request-timestamp": "2026-06-20T21:09:03.402+07:00[Asia/Jakarta]",
+      "Referer": "https://www.getmerlin.in/id/chat/07828788-e859-435f-8442-10b13f3bbc81",
+      "Accept-Language": "en-US",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "sec-ch-ua-mobile": "?0",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "Accept": "application/json, text/plain, */*",
+      "Content-Type": "application/json",
+      "x-merlin-version": "web-merlin"
+    },
+    "postData": "{\"limit\":15,\"page\":1}",
+    "timestamp": 1781964549.8201091
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://www.getmerlin.in/arcane/api/v1/user/survey/update-survey-events",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "Authorization": "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6ImVlOTA0NmVhZDJlMDUwMDAxMGVkNTA0M2I0ODNkODRiMGM1MmM3YzQiLCJ0eXAiOiJKV1QifQ.eyJwcm92aWRlcl9pZCI6ImFub255bW91cyIsImlzcyI6Imh0dHBzOi8vc2VjdXJldG9rZW4uZ29vZ2xlLmNvbS9mb3llci13b3JrIiwiYXVkIjoiZm95ZXItd29yayIsImF1dGhfdGltZSI6MTc4MTk2NDUzNSwidXNlcl9pZCI6IkpaSEVSWWNiTkZia2ZNMHdrS0RGNGJ6aFc0MjIiLCJzdWIiOiJKWkhFUlljYk5GYmtmTTB3a0tERjRiemhXNDIyIiwiaWF0IjoxNzgxOTY0NTM1LCJleHAiOjE3ODE5NjgxMzUsImZpcmViYXNlIjp7ImlkZW50aXRpZXMiOnt9LCJzaWduX2luX3Byb3ZpZGVyIjoiYW5vbnltb3VzIn19.IQj2eqBAhtlRGq5QmJsMmw2P8t2DeSRmdsy4vl3fCEHFfouNYwozTSS8oQ9QUNOlTKHaCRqpvYynjwujE2K5zaZd5e-16ogf6oh5RKQQE5ETagTTYRVU-T_JlQYPjlNUDIZ2-a-oZW17sPO9ESn96S2M6Akgh_oC-5-TJr3RkBHrg_UxxKaT3eFKNDybcbELNrJf3RLyDQ9DiJTECsFrvvvv1iVoHE3101BH93uaWXl0ynAeLBm5SHm1gW2953MaW8-gUw7bchZSDHyJt-halcgbF9CFYoN3sxdS0zQiCpu6CM8pozLhMFBtDyX2102VlFp3ZISeFHTO5piG1EVnyA",
+      "x-request-timestamp": "2026-06-20T21:09:03.402+07:00[Asia/Jakarta]",
+      "Referer": "https://www.getmerlin.in/id/chat/07828788-e859-435f-8442-10b13f3bbc81",
+      "Accept-Language": "en-US",
+      "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+      "sec-ch-ua-mobile": "?0",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      "Accept": "application/json, text/plain, */*",
+      "Content-Type": "application/json",
+      "x-merlin-version": "web-merlin"
+    },
+    "postData": "{\"updatedSurveyEvents\":{\"triggeredPostAuth\":1,\"firstLogin\":1781964549971,\"lastLogin\":1781964549971,\"chatActivityCount\":1,\"lastSubscriptionDate\":0}}",
+    "timestamp": 1781964550.2636802
+  }
+]

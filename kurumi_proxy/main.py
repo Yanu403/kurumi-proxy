@@ -19,8 +19,9 @@ from kurumi_proxy.models import (
     CompletionMessage,
     CompletionUsage,
 )
-from kurumi_proxy.providers.base import ProviderError, ProviderResult
+from kurumi_proxy.providers.base import BaseProvider, ProviderError, ProviderResult
 from kurumi_proxy.providers.codebuddy import KNOWN_MODELS, CodeBuddyProvider
+from kurumi_proxy.providers.merlin import MerlinProvider
 from kurumi_proxy.router import CredentialRouter
 from kurumi_proxy.rtk import RtkStats, preprocess_messages
 from kurumi_proxy.providers.codebuddy_acp.daemon import AcpDaemon, AcpDaemonStartupError
@@ -46,9 +47,101 @@ def get_acp_daemon(settings: Settings) -> AcpDaemon:
         )
     return _acp_daemon
 
-ProviderFactory = Callable[[Settings], CodeBuddyProvider]
+ProviderFactory = Callable[[Settings], BaseProvider]
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Multi-provider registry & dispatch
+# ---------------------------------------------------------------------------
+
+# Built-in provider factories keyed by their routing prefix. A factory takes
+# the app Settings and returns a BaseProvider instance.
+_BUILTIN_PROVIDERS: dict[str, ProviderFactory] = {
+    "codebuddy": CodeBuddyProvider,
+    "merlin": lambda settings: MerlinProvider(settings),
+}
+
+# Models (per provider) that are published on /v1/models even before the
+# Merlin CDN is fetched, so the endpoint is always populated.
+_MERLIN_FALLBACK_MODELS = [
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro",
+    "gpt-5.5",
+    "claude-4.5-haiku",
+    "deepseek-v4-pro",
+]
+
+
+def parse_provider_model(model: str | None, default_provider: str) -> tuple[str, str | None]:
+    """Split a ``provider/model`` request into ``(provider_id, model)``.
+
+    ``merlin/gpt-5.5`` -> ``("merlin", "gpt-5.5")``.
+    ``gpt-5.5``         -> ``(default_provider, "gpt-5.5")``.
+    ``merlin``          -> ``("merlin", None)`` (provider default model).
+    ``None``            -> ``(default_provider, None)``.
+
+    Only the first slash is a separator, so model IDs containing slashes
+    (none currently) would still route correctly.
+    """
+    if not model:
+        return default_provider, None
+    if "/" in model:
+        prefix, _, rest = model.partition("/")
+        if prefix in _BUILTIN_PROVIDERS:
+            return prefix, (rest or None)
+    return default_provider, model
+
+
+def get_provider_registry(request: Request) -> dict[str, ProviderFactory]:
+    """Return the provider factory map, honoring test overrides.
+
+    Tests may install ``app.state.provider_factory`` (a single factory used for
+    the default/un-prefixed path) and/or ``app.state.provider_registry`` (a
+    full mapping). The built-in registry is always the base.
+    """
+    registry = dict(_BUILTIN_PROVIDERS)
+    override = getattr(request.app.state, "provider_registry", None)
+    if isinstance(override, dict):
+        registry.update(override)
+    return registry
+
+
+async def resolve_provider(
+    request: Request,
+    settings: Settings,
+    model: str | None,
+) -> tuple[BaseProvider, str | None, str]:
+    """Resolve a request model to ``(provider, model, provider_id)``.
+
+    Prefixed models (``merlin/...``) always dispatch to the named provider.
+    Un-prefixed models use the default-provider flow: the test-injected
+    ``app.state.provider_factory`` takes priority, then the configured
+    ``default_provider``.
+    """
+    provider_id, sub_model = parse_provider_model(model, settings.kurumi_proxy_default_provider)
+
+    # Test override: a single factory covers the default path.
+    test_factory = getattr(request.app.state, "provider_factory", None)
+    if test_factory is not None and provider_id == settings.kurumi_proxy_default_provider:
+        return test_factory(settings), sub_model, provider_id
+
+    registry = get_provider_registry(request)
+    factory = registry.get(provider_id)
+    if factory is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "message": f"Unknown provider '{provider_id}'. Known: {sorted(registry)}.",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "unknown_provider",
+                }
+            },
+        )
+    return factory(settings), sub_model, provider_id
 app = FastAPI(title="kurumi-proxy", version="0.1.0")
 
 

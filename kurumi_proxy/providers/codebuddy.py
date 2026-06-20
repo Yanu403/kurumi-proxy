@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from kurumi_proxy.config import Settings
 from kurumi_proxy.models import ChatMessage, GenericContentBlock, TextContentBlock
 from kurumi_proxy.providers.base import (
+    BaseProvider,
     MissingCredentialError,
     ProviderBadGatewayError,
     ProviderResult,
@@ -94,9 +95,15 @@ def build_prompt(messages: Sequence[ChatMessage]) -> str:
     return "\n\n".join(part for part in prompt_parts if part.strip()).strip()
 
 
-class CodeBuddyProvider:
+class CodeBuddyProvider(BaseProvider):
+    provider_id = "codebuddy"
+    provider_name = "CodeBuddy"
+
     def __init__(self, settings: Settings):
         self.settings = settings
+
+    def list_models(self) -> list[str]:
+        return list(KNOWN_MODELS)
 
     def command(self, prompt: str, model: str) -> list[str]:
         return [

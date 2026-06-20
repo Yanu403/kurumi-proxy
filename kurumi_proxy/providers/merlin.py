@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 _FIREBASE_SIGNUP_URL = (
     "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={key}"
 )
+_FIREBASE_SIGNIN_URL = (
+    "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={key}"
+)
 _FIREBASE_TOKEN_URL = (
     "https://securetoken.googleapis.com/v1/token?key={key}"
 )
@@ -98,21 +101,51 @@ class MerlinAuth:
         return time.time() >= self._expires_at - self._refresh_margin_seconds
 
     async def get_token(self) -> str:
-        """Return a valid idToken, signing up or refreshing as needed."""
+        """Return a valid idToken, signing in or refreshing as needed."""
         if not self._is_expired():
             assert self._id_token is not None
             return self._id_token
         async with self._lock:
-            # Re-check inside the lock: another coroutine may have refreshed.
             if not self._is_expired():
                 assert self._id_token is not None
                 return self._id_token
             if self._refresh_token is not None and self._id_token is not None:
                 await self._refresh()
+            elif self.settings.merlin_email and self.settings.merlin_password:
+                await self._sign_in_with_password()
             else:
                 await self._sign_up_anonymous()
             assert self._id_token is not None
             return self._id_token
+
+    async def _sign_in_with_password(self) -> None:
+        """Sign in with email/password to get a Pro token."""
+        url = _FIREBASE_SIGNIN_URL.format(key=self.settings.merlin_firebase_api_key)
+        try:
+            resp = await self._client.post(
+                url,
+                json={
+                    "email": self.settings.merlin_email,
+                    "password": self.settings.merlin_password,
+                    "returnSecureToken": True,
+                },
+                headers={"Content-Type": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise ProviderUnavailableError(f"Firebase sign-in request failed: {exc}") from exc
+        if resp.status_code >= 500:
+            raise ProviderUnavailableError(f"Firebase sign-in unavailable (HTTP {resp.status_code}).")
+        if resp.status_code >= 400:
+            raise ProviderAuthError(f"Firebase sign-in rejected (HTTP {resp.status_code}). Check MERLIN_EMAIL/MERLIN_PASSWORD.")
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise ProviderBadGatewayError("Firebase sign-in returned non-JSON.") from exc
+        self._apply_tokens(
+            id_token=payload.get("idToken"),
+            refresh_token=payload.get("refreshToken"),
+            expires_in=payload.get("expiresIn", "3600"),
+        )
 
     async def _sign_up_anonymous(self) -> None:
         url = _FIREBASE_SIGNUP_URL.format(key=self.settings.merlin_firebase_api_key)
@@ -573,10 +606,15 @@ async def _safe_text(resp: httpx.Response) -> str:
 
 async def _line_iter(resp: httpx.Response) -> AsyncIterator[str]:
     """Yield decoded text lines from an httpx streaming response."""
+    buffer = ""
     async for chunk in resp.aiter_text():
-        # aiter_text yields arbitrary chunks; split on newlines and re-emit.
-        for line in chunk.splitlines(keepends=True):
-            yield line
+        buffer += chunk
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            yield line + "\n"
+    # Flush remaining buffer
+    if buffer:
+        yield buffer
 
 
 def _extract_model_ids(payload: object) -> list[str]:

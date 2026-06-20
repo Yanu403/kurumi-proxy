@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     # session. When set, the provider skips anonymous sign-up and refreshes
     # this token instead, unlocking Pro models. Format: "idToken|refreshToken".
     merlin_refresh_token: str | None = Field(default=None, alias="MERLIN_REFRESH_TOKEN")
+    merlin_email: str | None = Field(default=None, alias="MERLIN_EMAIL")
+    merlin_password: str | None = Field(default=None, alias="MERLIN_PASSWORD")
     merlin_default_model: str = Field(
         default="gemini-2.5-flash-lite",
         alias="MERLIN_DEFAULT_MODEL",

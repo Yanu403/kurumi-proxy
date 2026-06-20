@@ -670,8 +670,11 @@ async def chat_completions(
         return await chat_completions_acp(request, settings, store)
     reject_unsupported_tool_calls(request, settings, force=has_test_override)
 
-    provider = provider_factory(settings)
-    selected_model = request.model or settings.codebuddy_model
+    # Resolve provider from model prefix (e.g. merlin/gpt-5.5 -> MerlinProvider)
+    provider, sub_model, provider_id = await resolve_provider(fastapi_request, settings, request.model)
+    selected_model = sub_model or (
+        settings.merlin_default_model if provider_id == "merlin" else settings.codebuddy_model
+    )
     processed_messages, rtk_stats = preprocess_messages(request.messages, settings)
     prompt_text = prompt_text_for_usage(processed_messages)
     start = time.monotonic()

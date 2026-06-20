@@ -38,9 +38,29 @@ from kurumi_proxy.providers.base import (
     ProviderUnavailableError,
     StreamDelta,
 )
-from kurumi_proxy.providers.codebuddy import message_content_to_text
+from kurumi_proxy.models import GenericContentBlock, TextContentBlock
 
 logger = logging.getLogger(__name__)
+
+
+def message_content_to_text(message: ChatMessage) -> str:
+    """Collapse a ChatMessage's content into a plain string."""
+    content = message.content
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, TextContentBlock):
+            parts.append(block.text)
+        elif isinstance(block, GenericContentBlock):
+            parts.append(f"[Unsupported content block ignored: {block.type}]")
+        else:
+            parts.append("[Unsupported content block ignored]")
+    return "\n".join(parts)
+
 
 # Firebase endpoints (key is project-specific but public, shipped in the
 # Merlin web bundle).
@@ -236,7 +256,7 @@ def build_merlin_request(
 
     Merlin's API takes a single ``message.content`` string; we collapse the
     full conversation into that string using the same role-tagged layout the
-    CodeBuddy provider uses, so multi-turn context is preserved.
+    role-tagged layout, so multi-turn context is preserved.
     """
     parts: list[str] = []
     for message in messages:

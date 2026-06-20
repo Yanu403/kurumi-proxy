@@ -3,9 +3,7 @@
 A *provider* is a backend that can turn an OpenAI-style chat completion
 request into a completion. Every provider implements :class:`BaseProvider`.
 
-The proxy supports multiple providers (CodeBuddy, Merlin, ...). Requests are
-routed to a provider based on a ``provider/model`` prefix convention, e.g.
-``merlin/gpt-5.5`` routes to :class:`MerlinProvider` with model ``gpt-5.5``.
+The proxy currently uses :class:`MerlinProvider` as the sole backend.
 """
 
 from __future__ import annotations
@@ -93,11 +91,10 @@ class BaseProvider(ABC):
     chunk; providers with native streaming override it.
     """
 
-    #: Short identifier used in the ``provider/model`` routing prefix and in
-    #: the ``owned_by`` field of ``/v1/models``.
+    #: Short identifier used in usage tracking.
     provider_id: str = "base"
 
-    #: Human-readable name shown in ``/admin/providers``.
+    #: Human-readable name.
     provider_name: str = "Base Provider"
 
     @abstractmethod
@@ -108,12 +105,7 @@ class BaseProvider(ABC):
         *,
         api_key: str | None = None,
     ) -> ProviderResult:
-        """Return a full completion for ``messages``.
-
-        ``api_key`` is optional: providers that manage their own credentials
-        (e.g. Merlin, which authenticates with Firebase) may ignore it, while
-        providers that proxy to a keyed upstream (e.g. CodeBuddy) use it.
-        """
+        """Return a full completion for ``messages``."""
 
     async def stream(
         self,

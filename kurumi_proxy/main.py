@@ -2,16 +2,14 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable
-from inspect import signature
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
 
 from kurumi_proxy.config import Settings, get_settings
-from kurumi_proxy.db import Connection, ConnectionStore
+from kurumi_proxy.db import UsageStore
 from kurumi_proxy.models import (
     ChatCompletionChoice,
     ChatCompletionRequest,
@@ -19,52 +17,13 @@ from kurumi_proxy.models import (
     CompletionMessage,
     CompletionUsage,
 )
-from kurumi_proxy.providers.base import BaseProvider, ProviderError, ProviderResult
-from kurumi_proxy.providers.codebuddy import KNOWN_MODELS, CodeBuddyProvider
+from kurumi_proxy.providers.base import BaseProvider, ProviderError
 from kurumi_proxy.providers.merlin import MerlinProvider
-from kurumi_proxy.router import CredentialRouter
 from kurumi_proxy.rtk import RtkStats, preprocess_messages
-from kurumi_proxy.providers.codebuddy_acp.daemon import AcpDaemon, AcpDaemonStartupError
-from kurumi_proxy.providers.codebuddy_acp.session import (
-    AcpSession,
-    AcpAuthenticationRequiredError,
-    AcpUpstreamRefusalError,
-)
-from kurumi_proxy.providers.codebuddy_acp.translator import (
-    collect_openai_completion,
-    translate_to_openai_stream,
-)
-
-# Global ACP daemon instance (lazily initialized)
-_acp_daemon: AcpDaemon | None = None
-
-def get_acp_daemon(settings: Settings) -> AcpDaemon:
-    """Get or create the global ACP daemon."""
-    global _acp_daemon
-    if _acp_daemon is None:
-        _acp_daemon = AcpDaemon(
-            codebuddy_bin=settings.codebuddy_bin,
-        )
-    return _acp_daemon
-
-ProviderFactory = Callable[[Settings], BaseProvider]
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Multi-provider registry & dispatch
-# ---------------------------------------------------------------------------
-
-# Built-in provider factories keyed by their routing prefix. A factory takes
-# the app Settings and returns a BaseProvider instance.
-_BUILTIN_PROVIDERS: dict[str, ProviderFactory] = {
-    "codebuddy": CodeBuddyProvider,
-    "merlin": lambda settings: MerlinProvider(settings),
-}
-
-# Models (per provider) that are published on /v1/models even before the
-# Merlin CDN is fetched, so the endpoint is always populated.
+# Merlin fallback models shown on /v1/models before the CDN list is fetched.
 _MERLIN_FALLBACK_MODELS = [
     "gemini-2.5-flash-lite",
     "gemini-2.5-pro",
@@ -73,90 +32,12 @@ _MERLIN_FALLBACK_MODELS = [
     "deepseek-v4-pro",
 ]
 
-
-def parse_provider_model(model: str | None, default_provider: str) -> tuple[str, str | None]:
-    """Split a ``provider/model`` request into ``(provider_id, model)``.
-
-    ``merlin/gpt-5.5`` -> ``("merlin", "gpt-5.5")``.
-    ``gpt-5.5``         -> ``(default_provider, "gpt-5.5")``.
-    ``merlin``          -> ``("merlin", None)`` (provider default model).
-    ``None``            -> ``(default_provider, None)``.
-
-    Only the first slash is a separator, so model IDs containing slashes
-    (none currently) would still route correctly.
-    """
-    if not model:
-        return default_provider, None
-    if "/" in model:
-        prefix, _, rest = model.partition("/")
-        if prefix in _BUILTIN_PROVIDERS:
-            return prefix, (rest or None)
-    return default_provider, model
+app = FastAPI(title="kurumi-proxy", version="0.2.0")
 
 
-def get_provider_registry(request: Request) -> dict[str, ProviderFactory]:
-    """Return the provider factory map, honoring test overrides.
-
-    Tests may install ``app.state.provider_factory`` (a single factory used for
-    the default/un-prefixed path) and/or ``app.state.provider_registry`` (a
-    full mapping). The built-in registry is always the base.
-    """
-    registry = dict(_BUILTIN_PROVIDERS)
-    override = getattr(request.app.state, "provider_registry", None)
-    if isinstance(override, dict):
-        registry.update(override)
-    return registry
-
-
-async def resolve_provider(
-    request: Request,
-    settings: Settings,
-    model: str | None,
-) -> tuple[BaseProvider, str | None, str]:
-    """Resolve a request model to ``(provider, model, provider_id)``.
-
-    Prefixed models (``merlin/...``) always dispatch to the named provider.
-    Un-prefixed models use the default-provider flow: the test-injected
-    ``app.state.provider_factory`` takes priority, then the configured
-    ``default_provider``.
-    """
-    provider_id, sub_model = parse_provider_model(model, settings.kurumi_proxy_default_provider)
-
-    # Test override: a single factory covers the default path.
-    test_factory = getattr(request.app.state, "provider_factory", None)
-    if test_factory is not None and provider_id == settings.kurumi_proxy_default_provider:
-        return test_factory(settings), sub_model, provider_id
-
-    registry = get_provider_registry(request)
-    factory = registry.get(provider_id)
-    if factory is None:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {
-                    "message": f"Unknown provider '{provider_id}'. Known: {sorted(registry)}.",
-                    "type": "invalid_request_error",
-                    "param": "model",
-                    "code": "unknown_provider",
-                }
-            },
-        )
-    return factory(settings), sub_model, provider_id
-app = FastAPI(title="kurumi-proxy", version="0.1.0")
-
-
-class ConnectionCreateRequest(BaseModel):
-    name: str = Field(min_length=1)
-    api_key: str = Field(min_length=1)
-    priority: int = 100
-    is_active: bool = True
-
-
-class ConnectionPatchRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1)
-    api_key: str | None = Field(default=None, min_length=1)
-    priority: int | None = None
-    is_active: bool | None = None
+# ---------------------------------------------------------------------------
+# Exception handler
+# ---------------------------------------------------------------------------
 
 
 @app.exception_handler(HTTPException)
@@ -169,26 +50,31 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     )
 
 
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
+
+
 async def get_app_settings() -> Settings:
     return get_settings()
 
 
-def _store_state_key(settings: Settings) -> str:
-    return f"connection_store_{settings.kurumi_proxy_db_path}"
+def _usage_store_state_key(settings: Settings) -> str:
+    return f"usage_store_{settings.kurumi_proxy_db_path}"
 
 
-async def get_connection_store(
+async def get_usage_store(
     request: Request,
     settings: Settings = Depends(get_app_settings),
-) -> ConnectionStore:
-    override = getattr(request.app.state, "connection_store", None)
+) -> UsageStore:
+    override = getattr(request.app.state, "usage_store", None)
     if override is not None:
         override.init()
         return override
-    key = _store_state_key(settings)
+    key = _usage_store_state_key(settings)
     store = getattr(request.app.state, key, None)
     if store is None:
-        store = ConnectionStore(settings)
+        store = UsageStore(settings)
         setattr(request.app.state, key, store)
     store.init()
     return store
@@ -196,7 +82,7 @@ async def get_connection_store(
 
 @app.on_event("startup")
 async def init_default_store() -> None:
-    ConnectionStore(get_settings()).init()
+    UsageStore(get_settings()).init()
 
 
 def _require_bearer(authorization: str | None, settings: Settings) -> None:
@@ -215,6 +101,27 @@ async def require_admin_auth(
     settings: Settings = Depends(get_app_settings),
 ) -> None:
     _require_bearer(authorization, settings)
+
+
+async def require_v1_auth(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    settings: Settings = Depends(get_app_settings),
+) -> None:
+    if not request.url.path.startswith("/v1/"):
+        return
+    _require_bearer(authorization, settings)
+
+
+async def get_provider(request: Request, settings: Settings = Depends(get_app_settings)) -> BaseProvider:
+    """Return the active provider (Merlin). Tests can override via ``app.state.provider_factory``."""
+    factory = getattr(request.app.state, "provider_factory", MerlinProvider)
+    return factory(settings)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def estimate_tokens(text: str) -> int:
@@ -246,72 +153,16 @@ async def stream_chat_completion(
     }
 
     yield format_sse_event(
-        {
-            **base_chunk,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"role": "assistant"},
-                    "finish_reason": None,
-                }
-            ],
-        }
+        {**base_chunk, "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]}
     )
-
     if text:
         yield format_sse_event(
-            {
-                **base_chunk,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"content": text},
-                        "finish_reason": None,
-                    }
-                ],
-            }
+            {**base_chunk, "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}]}
         )
-
     yield format_sse_event(
-        {
-            **base_chunk,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop",
-                }
-            ],
-        }
+        {**base_chunk, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
     )
     yield format_sse_event("[DONE]")
-
-
-async def require_v1_auth(
-    request: Request,
-    authorization: Annotated[str | None, Header()] = None,
-    settings: Settings = Depends(get_app_settings),
-) -> None:
-    if not request.url.path.startswith("/v1/"):
-        return
-    _require_bearer(authorization, settings)
-
-
-async def get_provider_factory(request: Request) -> ProviderFactory:
-    return getattr(request.app.state, "provider_factory", CodeBuddyProvider)
-
-
-async def call_provider(
-    provider: CodeBuddyProvider,
-    messages: list,
-    model: str,
-    *,
-    api_key: str | None,
-) -> ProviderResult:
-    complete = provider.complete
-    if "api_key" in signature(complete).parameters:
-        return await complete(messages, model, api_key=api_key)
-    return await complete(messages, model)
 
 
 def usage_from_text(prompt_text: str, completion_text: str = "") -> CompletionUsage:
@@ -325,7 +176,10 @@ def usage_from_text(prompt_text: str, completion_text: str = "") -> CompletionUs
 
 
 def prompt_text_for_usage(messages: list) -> str:
-    return "\n".join(message.role + ":" + (str(message.content) if message.content else "") for message in messages)
+    return "\n".join(
+        message.role + ":" + (str(message.content) if message.content else "")
+        for message in messages
+    )
 
 
 def _rtk_kwargs(stats: RtkStats) -> dict[str, int | None]:
@@ -336,25 +190,9 @@ def _rtk_kwargs(stats: RtkStats) -> dict[str, int | None]:
     }
 
 
-def reject_unsupported_tool_calls(request: ChatCompletionRequest, settings: Settings, *, force: bool = False) -> None:
-    # Allow tools when using ACP backend (the daemon path supports them).
-    # When `force=True` is passed (e.g. test override path), apply the
-    # legacy reject regardless of backend.
-    if settings.kurumi_proxy_backend == "acp" and not force:
-        return
-    if not request.tools:
-        return
-    raise HTTPException(
-        status_code=400,
-        detail={
-            "error": {
-                "message": "Kurumi Proxy is text-only and does not support tool_calls yet. Remove tools/tool_choice and send a text-only chat completion request.",
-                "type": "invalid_request_error",
-                "param": "tools",
-                "code": "unsupported_tool_calls",
-            }
-        },
-    )
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.get("/health")
@@ -363,9 +201,8 @@ async def health() -> dict[str, str]:
 
 
 @app.get("/v1/models", dependencies=[Depends(require_v1_auth)])
-async def models(settings: Settings = Depends(get_app_settings)) -> JSONResponse:
+async def models() -> JSONResponse:
     now = int(time.time())
-    model_ids = list(dict.fromkeys([settings.codebuddy_model, *KNOWN_MODELS]))
     return JSONResponse(
         {
             "object": "list",
@@ -374,10 +211,10 @@ async def models(settings: Settings = Depends(get_app_settings)) -> JSONResponse
                     "id": model_id,
                     "object": "model",
                     "created": now,
-                    "owned_by": "codebuddy",
+                    "owned_by": "merlin",
                     "permission": [
                         {
-                            "id": "modelperm-codebuddy",
+                            "id": f"modelperm-{model_id}",
                             "object": "model_permission",
                             "created": now,
                             "allow_create_engine": False,
@@ -392,369 +229,59 @@ async def models(settings: Settings = Depends(get_app_settings)) -> JSONResponse
                         }
                     ],
                 }
-                for model_id in model_ids
+                for model_id in _MERLIN_FALLBACK_MODELS
             ],
         }
     )
 
 
-@app.get("/admin/connections", dependencies=[Depends(require_admin_auth)])
-async def admin_list_connections(store: ConnectionStore = Depends(get_connection_store)) -> dict[str, object]:
-    return {"data": [connection.safe_dict() for connection in store.list_connections(include_inactive=True)]}
-
-
-@app.post("/admin/connections", dependencies=[Depends(require_admin_auth)])
-async def admin_create_connection(
-    payload: ConnectionCreateRequest,
-    store: ConnectionStore = Depends(get_connection_store),
-) -> dict[str, object]:
-    connection = store.create_connection(
-        name=payload.name,
-        api_key=payload.api_key,
-        priority=payload.priority,
-        is_active=payload.is_active,
-    )
-    return connection.safe_dict()
-
-
-@app.patch("/admin/connections/{connection_id}", dependencies=[Depends(require_admin_auth)])
-async def admin_patch_connection(
-    connection_id: str,
-    payload: ConnectionPatchRequest,
-    store: ConnectionStore = Depends(get_connection_store),
-) -> dict[str, object]:
-    updates = payload.model_dump(exclude_unset=True)
-    connection = store.update_connection(connection_id, **updates)
-    if connection is None:
-        raise HTTPException(status_code=404, detail="Connection not found")
-    return connection.safe_dict()
-
-
-@app.delete("/admin/connections/{connection_id}", dependencies=[Depends(require_admin_auth)])
-async def admin_delete_connection(
-    connection_id: str,
-    store: ConnectionStore = Depends(get_connection_store),
-) -> dict[str, object]:
-    connection = store.deactivate_connection(connection_id)
-    if connection is None:
-        raise HTTPException(status_code=404, detail="Connection not found")
-    return connection.safe_dict()
-
-
-@app.post("/admin/connections/{connection_id}/reset", dependencies=[Depends(require_admin_auth)])
-async def admin_reset_connection(
-    connection_id: str,
-    store: ConnectionStore = Depends(get_connection_store),
-) -> dict[str, object]:
-    connection = store.reset_connection(connection_id)
-    if connection is None:
-        raise HTTPException(status_code=404, detail="Connection not found")
-    return connection.safe_dict()
-
-
 @app.get("/admin/usage", dependencies=[Depends(require_admin_auth)])
-async def admin_usage(days: int = 7, store: ConnectionStore = Depends(get_connection_store)) -> dict[str, object]:
+async def admin_usage(days: int = 7, store: UsageStore = Depends(get_usage_store)) -> dict[str, object]:
     return store.usage_summary(days=days)
 
 
 @app.get("/admin/quota", dependencies=[Depends(require_admin_auth)])
-async def admin_quota(store: ConnectionStore = Depends(get_connection_store)) -> dict[str, object]:
+async def admin_quota(store: UsageStore = Depends(get_usage_store)) -> dict[str, object]:
     return store.quota_summary()
 
-
-@app.get("/admin/acp/status", dependencies=[Depends(require_admin_auth)])
-async def admin_acp_status(
-    settings: Settings = Depends(get_app_settings),
-) -> dict:
-    """Get ACP daemon status for monitoring."""
-    daemon = get_acp_daemon(settings)
-    status = daemon.get_status()
-    status["backend"] = settings.kurumi_proxy_backend
-    status["daemon_port"] = settings.codebuddy_daemon_port
-    return status
-
-
-
-async def chat_completions_acp(
-    request: ChatCompletionRequest,
-    settings: Settings,
-    store: ConnectionStore,
-) -> ChatCompletionResponse | StreamingResponse:
-    """
-    Handle chat completions using ACP backend (persistent daemon).
-    
-    Flow:
-    1. Acquire singleton daemon (start lazily on first request)
-    2. Open fresh ACP session (session/new)
-    3. Issue session/prompt with messages translated to prompt_blocks
-    4. Stream SSE events through translator
-    5. Handle errors: AcpUpstreamRefusalError → 502, AcpAuthenticationRequiredError → 503
-    """
-    daemon = get_acp_daemon(settings)
-    selected_model = request.model or settings.codebuddy_model
-    
-    # Ensure daemon is running (lazy start)
-    try:
-        await daemon.start()
-    except AcpDaemonStartupError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"error": {"message": f"Daemon startup failed: {exc}", "type": "daemon_error"}},
-        ) from exc
-    
-    # Preprocess messages (RTK if enabled)
-    processed_messages, rtk_stats = preprocess_messages(request.messages, settings)
-    
-    # Build prompt_blocks from messages
-    prompt_blocks = []
-    for msg in processed_messages:
-        if msg.content is None:
-            continue
-        if isinstance(msg.content, str):
-            prompt_blocks.append({"type": "text", "text": msg.content})
-        else:
-            # List of content blocks - extract text
-            for block in msg.content:
-                if hasattr(block, "text"):
-                    prompt_blocks.append({"type": "text", "text": block.text})
-    
-    start = time.monotonic()
-    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-    created = int(time.time())
-    
-    try:
-        # Create ACP session
-        session = AcpSession(daemon.rpc_client)
-        session_id = await session.new(cwd="/tmp")
-        
-        # Submit prompt and get event stream
-        acp_events = session.prompt(session_id, prompt_blocks)
-        
-        if request.stream:
-            # Streaming response
-            async def stream_wrapper():
-                try:
-                    async for chunk in translate_to_openai_stream(
-                        acp_events,
-                        model=selected_model,
-                        completion_id=completion_id,
-                        created=created,
-                    ):
-                        yield chunk
-                except AcpUpstreamRefusalError as exc:
-                    # Surface upstream refusal in stream
-                    error_chunk = {
-                        "id": completion_id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": selected_model,
-                        "choices": [{
-                            "index": 0,
-                            "delta": {"content": f"\n[Upstream error: {exc.message}]"},
-                            "finish_reason": "stop"
-                        }]
-                    }
-                    yield f"data: {json.dumps(error_chunk)}\n\n"
-                    yield "data: [DONE]\n\n"
-                except Exception as exc:
-                    logger.error(f"ACP streaming error: {exc}")
-                    error_chunk = {
-                        "id": completion_id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": selected_model,
-                        "choices": [{
-                            "index": 0,
-                            "delta": {"content": f"\n[Error: {exc}]"},
-                            "finish_reason": "stop"
-                        }]
-                    }
-                    yield f"data: {json.dumps(error_chunk)}\n\n"
-                    yield "data: [DONE]\n\n"
-                finally:
-                    # Best-effort session cleanup
-                    await session.close(session_id)
-            
-            # Record usage (estimate for streaming)
-            prompt_text = " ".join(
-                m.content if isinstance(m.content, str) else str(m.content)
-                for m in processed_messages
-            )
-            usage = usage_from_text(prompt_text)
-            store.record_usage(
-                model=selected_model,
-                connection=None,
-                endpoint="/v1/chat/completions",
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=0,
-                total_tokens=usage.prompt_tokens,
-                status="success",
-                duration_ms=int((time.monotonic() - start) * 1000),
-                **_rtk_kwargs(rtk_stats),
-            )
-            
-            return StreamingResponse(
-                stream_wrapper(),
-                media_type="text/event-stream",
-            )
-        else:
-            # Non-streaming response
-            try:
-                response_data = await collect_openai_completion(
-                    acp_events,
-                    model=selected_model,
-                    completion_id=completion_id,
-                    created=created,
-                )
-            finally:
-                # Best-effort session cleanup
-                await session.close(session_id)
-            
-            # Record usage
-            usage = response_data.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
-            store.record_usage(
-                model=selected_model,
-                connection=None,
-                endpoint="/v1/chat/completions",
-                prompt_tokens=usage["prompt_tokens"],
-                completion_tokens=usage["completion_tokens"],
-                total_tokens=usage["total_tokens"],
-                status="success",
-                duration_ms=int((time.monotonic() - start) * 1000),
-                **_rtk_kwargs(rtk_stats),
-            )
-            
-            return response_data
-    
-    except AcpAuthenticationRequiredError as exc:
-        # Daemon not authenticated - surface as 503
-        raise HTTPException(
-            status_code=503,
-            detail={"error": {"message": exc.args[0], "type": "authentication_required"}},
-        ) from exc
-    
-    except AcpUpstreamRefusalError as exc:
-        # Upstream refusal - surface as 502
-        raise HTTPException(
-            status_code=502,
-            detail={"error": {"message": exc.message, "type": "upstream_refusal"}},
-        ) from exc
-    
-    except HTTPException:
-        raise
-    
-    except Exception as exc:
-        logger.error(f"ACP request error: {exc}")
-        raise HTTPException(
-            status_code=502,
-            detail={"error": {"message": f"ACP backend error: {exc}", "type": "backend_error"}},
-        ) from exc
 
 @app.post("/v1/chat/completions", dependencies=[Depends(require_v1_auth)], response_model=None)
 async def chat_completions(
     request: ChatCompletionRequest,
     settings: Settings = Depends(get_app_settings),
-    provider_factory: ProviderFactory = Depends(get_provider_factory),
-    store: ConnectionStore = Depends(get_connection_store),
-    fastapi_request: Request = None,
+    provider: BaseProvider = Depends(get_provider),
+    store: UsageStore = Depends(get_usage_store),
 ) -> ChatCompletionResponse | StreamingResponse:
-    # Route to ACP backend only when (a) ACP is configured AND (b) the test
-    # harness has not injected a provider_factory override. Tests that monkey-
-    # patch app.state.provider_factory expect the legacy subprocess path so
-    # they can run hermetically without spawning a real CodeBuddy daemon.
-    has_test_override = (
-        fastapi_request is not None
-        and getattr(fastapi_request.app.state, "provider_factory", None) is not None
-    )
-    if settings.kurumi_proxy_backend == "acp" and not has_test_override:
-        return await chat_completions_acp(request, settings, store)
-    reject_unsupported_tool_calls(request, settings, force=has_test_override)
-
-    # Resolve provider from model prefix (e.g. merlin/gpt-5.5 -> MerlinProvider)
-    provider, sub_model, provider_id = await resolve_provider(fastapi_request, settings, request.model)
-    selected_model = sub_model or (
-        settings.merlin_default_model if provider_id == "merlin" else settings.codebuddy_model
-    )
     processed_messages, rtk_stats = preprocess_messages(request.messages, settings)
     prompt_text = prompt_text_for_usage(processed_messages)
+    selected_model = request.model or settings.merlin_default_model
     start = time.monotonic()
 
-    result: ProviderResult | None = None
-    selected_connection: Connection | None = None
-    last_error: ProviderError | None = None
-    router = CredentialRouter(store, settings)
-    attempted: set[str] = set()
-
-    # Keep tests and custom in-process providers ergonomic when no upstream key exists.
-    custom_provider_without_credentials = (
-        provider_factory is not CodeBuddyProvider
-        and not settings.codebuddy_api_key
-        and not store.list_connections(include_inactive=False)
-    )
-
-    if custom_provider_without_credentials:
-        try:
-            result = await call_provider(provider, processed_messages, selected_model, api_key=None)
-        except ProviderError as exc:
-            last_error = exc
-            usage = usage_from_text(prompt_text)
-            store.record_usage(
-                model=selected_model,
-                connection=None,
-                endpoint="/v1/chat/completions",
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=0,
-                total_tokens=usage.prompt_tokens,
-                status="error",
-                error=exc.message,
-                duration_ms=int((time.monotonic() - start) * 1000),
-                **_rtk_kwargs(rtk_stats),
-            )
-    else:
-        while True:
-            connection = router.next_connection(selected_model, attempted)
-            if connection is None:
-                if last_error is None:
-                    last_error = router.no_credentials_error()
-                break
-            attempted.add(connection.id)
-            try:
-                result = await call_provider(provider, processed_messages, selected_model, api_key=connection.api_key)
-                selected_connection = connection
-                router.mark_success(connection)
-                break
-            except ProviderError as exc:
-                last_error = exc
-                usage = usage_from_text(prompt_text)
-                store.record_usage(
-                    model=selected_model,
-                    connection=connection,
-                    endpoint="/v1/chat/completions",
-                    prompt_tokens=usage.prompt_tokens,
-                    completion_tokens=0,
-                    total_tokens=usage.prompt_tokens,
-                    status="error",
-                    error=exc.message,
-                    duration_ms=int((time.monotonic() - start) * 1000),
-                    **_rtk_kwargs(rtk_stats),
-                )
-                classification = router.mark_failure(connection, selected_model, exc)
-                if not classification.retryable:
-                    break
-
-    if result is None:
-        assert last_error is not None
+    try:
+        result = await provider.complete(processed_messages, selected_model)
+    except ProviderError as exc:
+        usage = usage_from_text(prompt_text)
+        store.record_usage(
+            model=selected_model,
+            endpoint="/v1/chat/completions",
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=0,
+            total_tokens=usage.prompt_tokens,
+            status="error",
+            error=exc.message,
+            duration_ms=int((time.monotonic() - start) * 1000),
+            **_rtk_kwargs(rtk_stats),
+        )
         raise HTTPException(
-            status_code=last_error.status_code,
-            detail={"error": {"message": last_error.message, "type": "provider_error"}},
-        ) from last_error
+            status_code=exc.status_code,
+            detail={"error": {"message": exc.message, "type": "provider_error"}},
+        ) from exc
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     usage = usage_from_text(prompt_text, result.text)
     store.record_usage(
         model=result.model,
-        connection=selected_connection,
         endpoint="/v1/chat/completions",
         prompt_tokens=usage.prompt_tokens,
         completion_tokens=usage.completion_tokens,

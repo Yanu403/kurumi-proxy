@@ -4,7 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from kurumi_proxy.config import Settings
-from kurumi_proxy.db import ConnectionStore
+from kurumi_proxy.db import UsageStore
 from kurumi_proxy.main import app, get_app_settings
 from kurumi_proxy.providers.base import ProviderBadGatewayError, ProviderResult
 
@@ -14,13 +14,13 @@ class FakeProvider:
         self.settings = settings
 
     async def complete(self, messages: object, model: str | None = None) -> ProviderResult:
-        return ProviderResult(text="mocked response", model=model or "default-model")
+        return ProviderResult(text="mocked response", model=model or "gemini-2.5-flash-lite")
 
 
 @pytest.fixture(autouse=True)
 def reset_app_state(tmp_path) -> None:
     async def override_settings() -> Settings:
-        return Settings(_env_file=None, KURUMI_PROXY_API_KEY=None, CODEBUDDY_API_KEY=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "test.sqlite3"))
+        return Settings(_env_file=None, KURUMI_PROXY_API_KEY=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "test.sqlite3"))
 
     app.dependency_overrides.clear()
     app.dependency_overrides[get_app_settings] = override_settings
@@ -29,8 +29,8 @@ def reset_app_state(tmp_path) -> None:
     app.dependency_overrides.clear()
     if hasattr(app.state, "provider_factory"):
         del app.state.provider_factory
-    if hasattr(app.state, "connection_store"):
-        del app.state.connection_store
+    if hasattr(app.state, "usage_store"):
+        del app.state.usage_store
 
 
 def client() -> AsyncClient:
@@ -48,19 +48,16 @@ async def test_health_ok() -> None:
 
 
 @pytest.mark.asyncio
-async def test_models_include_codebuddy_ids() -> None:
-    async def override_settings() -> Settings:
-        return Settings(_env_file=None, KURUMI_PROXY_API_KEY=None, CODEBUDDY_API_KEY=None, CODEBUDDY_MODEL="custom-model")
-
-    app.dependency_overrides[get_app_settings] = override_settings
-
+async def test_models_returns_merlin_models() -> None:
     async with client() as ac:
         response = await ac.get("/v1/models")
 
     assert response.status_code == 200
     data = response.json()["data"]
     ids = {model["id"] for model in data}
-    assert {"custom-model", "default-model", "gpt-5.5", "gemini-3.1-pro"} <= ids
+    assert {"gemini-2.5-flash-lite", "gemini-2.5-pro", "gpt-5.5"} <= ids
+    # owned_by should be "merlin"
+    assert all(model["owned_by"] == "merlin" for model in data)
 
 
 @pytest.mark.asyncio
@@ -81,67 +78,17 @@ async def test_chat_completion_openai_shape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_rejects_tool_calls_before_provider() -> None:
-    class CountingProvider:
-        calls = 0
-
-        def __init__(self, settings: Settings):
-            self.settings = settings
-
-        async def complete(self, messages: object, model: str | None = None) -> ProviderResult:
-            CountingProvider.calls += 1
-            return ProviderResult(text="should not be called", model=model or "default-model")
-
-    app.state.provider_factory = CountingProvider
-
+async def test_chat_completion_default_model() -> None:
+    """When model is omitted, uses merlin_default_model."""
     async with client() as ac:
         response = await ac.post(
             "/v1/chat/completions",
-            json={
-                "model": "gpt-5.5",
-                "messages": [{"role": "user", "content": "Use a tool."}],
-                "tools": [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "get_status",
-                            "description": "Get repository status.",
-                            "parameters": {"type": "object", "properties": {}},
-                        },
-                    }
-                ],
-                "tool_choice": "auto",
-            },
+            json={"messages": [{"role": "user", "content": "hello"}]},
         )
 
-    assert response.status_code == 400
     body = response.json()
-    assert body == {
-        "error": {
-            "message": "Kurumi Proxy is text-only and does not support tool_calls yet. Remove tools/tool_choice and send a text-only chat completion request.",
-            "type": "invalid_request_error",
-            "param": "tools",
-            "code": "unsupported_tool_calls",
-        }
-    }
-    assert CountingProvider.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_chat_completion_allows_empty_tools_array() -> None:
-    async with client() as ac:
-        response = await ac.post(
-            "/v1/chat/completions",
-            json={
-                "model": "gpt-5.5",
-                "messages": [{"role": "user", "content": "hello"}],
-                "tools": [],
-                "tool_choice": "none",
-            },
-        )
-
     assert response.status_code == 200
-    assert response.json()["choices"][0]["message"]["content"] == "mocked response"
+    assert body["model"] == "gemini-2.5-flash-lite"
 
 
 @pytest.mark.asyncio
@@ -170,7 +117,7 @@ async def test_streaming_chat_completion_openai_sse_shape() -> None:
 @pytest.mark.asyncio
 async def test_downstream_api_key_enforcement() -> None:
     async def override_settings() -> Settings:
-        return Settings(_env_file=None, KURUMI_PROXY_API_KEY="downstream-secret", CODEBUDDY_API_KEY=None)
+        return Settings(_env_file=None, KURUMI_PROXY_API_KEY="downstream-secret")
 
     app.dependency_overrides[get_app_settings] = override_settings
 
@@ -186,14 +133,15 @@ async def test_downstream_api_key_enforcement() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_upstream_credential_returns_503(tmp_path) -> None:
-    if hasattr(app.state, "provider_factory"):
-        del app.state.provider_factory
+async def test_provider_error_surfaces_as_502(tmp_path) -> None:
+    class ErrorProvider:
+        def __init__(self, settings: Settings):
+            self.settings = settings
 
-    async def override_settings() -> Settings:
-        return Settings(_env_file=None, KURUMI_PROXY_API_KEY=None, CODEBUDDY_API_KEY=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "missing.sqlite3"))
+        async def complete(self, messages: object, model: str | None = None) -> ProviderResult:
+            raise ProviderBadGatewayError("upstream exploded")
 
-    app.dependency_overrides[get_app_settings] = override_settings
+    app.state.provider_factory = ErrorProvider
 
     async with client() as ac:
         response = await ac.post(
@@ -201,69 +149,40 @@ async def test_missing_upstream_credential_returns_503(tmp_path) -> None:
             json={"messages": [{"role": "user", "content": "hello"}]},
         )
 
-    assert response.status_code == 503
+    assert response.status_code == 502
     body = response.json()
     assert body["error"]["type"] == "provider_error"
-    assert "CODEBUDDY_API_KEY" in body["error"]["message"]
-
-
-def test_db_initializes_and_seeds_env_key(tmp_path) -> None:
-    store = ConnectionStore(
-        Settings(_env_file=None, KURUMI_PROXY_API_KEY=None, CODEBUDDY_API_KEY="seed-secret", KURUMI_PROXY_DB_PATH=str(tmp_path / "seed.sqlite3"))
-    )
-    connections = store.list_connections()
-
-    assert len(connections) == 1
-    assert connections[0].id == "env-default"
-    assert connections[0].name == "env-default"
-    assert connections[0].api_key == "seed-secret"
-    assert "api_key" not in connections[0].safe_dict()
+    assert "upstream exploded" in body["error"]["message"]
 
 
 @pytest.mark.asyncio
-async def test_admin_connections_never_return_raw_api_key(tmp_path) -> None:
-    settings = Settings(_env_file=None, KURUMI_PROXY_API_KEY=None, CODEBUDDY_API_KEY=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "admin.sqlite3"))
-    store = ConnectionStore(settings)
-    app.state.connection_store = store
-
-    async with client() as ac:
-        created = await ac.post(
-            "/admin/connections",
-            json={"name": "primary", "api_key": "upstream-secret", "priority": 10},
-        )
-        listed = await ac.get("/admin/connections")
-
-    assert created.status_code == 200
-    assert listed.status_code == 200
-    assert created.json()["name"] == "primary"
-    assert "upstream-secret" not in created.text
-    assert "api_key" not in created.json()
-    assert "upstream-secret" not in listed.text
-    assert listed.json()["data"][0]["priority"] == 10
-
-
-@pytest.mark.asyncio
-async def test_fallback_retries_second_key_and_records_usage(tmp_path) -> None:
-    settings = Settings(_env_file=None, KURUMI_PROXY_API_KEY=None, CODEBUDDY_API_KEY=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "fallback.sqlite3"))
-    store = ConnectionStore(settings)
-    store.create_connection(name="bad", api_key="bad-key", priority=1)
-    store.create_connection(name="good", api_key="good-key", priority=2)
-    app.state.connection_store = store
-
-    class FallbackProvider:
-        calls: list[str | None] = []
-
+async def test_provider_error_is_recorded_in_usage(tmp_path) -> None:
+    class ErrorProvider:
         def __init__(self, settings: Settings):
             self.settings = settings
 
-        async def complete(self, messages: object, model: str | None = None, *, api_key: str | None = None) -> ProviderResult:
-            self.calls.append(api_key)
-            if api_key == "bad-key":
-                raise ProviderBadGatewayError("quota exhausted")
-            return ProviderResult(text="fallback ok", model=model or "default-model")
+        async def complete(self, messages: object, model: str | None = None) -> ProviderResult:
+            raise ProviderBadGatewayError("quota exhausted")
 
-    app.state.provider_factory = FallbackProvider
+    app.state.provider_factory = ErrorProvider
 
+    async with client() as ac:
+        response = await ac.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-5.5", "messages": [{"role": "user", "content": "hello"}]},
+        )
+
+    assert response.status_code == 502
+    # Usage should be recorded as an error
+    store = UsageStore(Settings(_env_file=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "test.sqlite3")))
+    store.init()
+    usage = store.usage_summary(days=1)["items"]
+    assert len(usage) == 1
+    assert usage[0]["errors"] == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_records_usage(tmp_path) -> None:
     async with client() as ac:
         response = await ac.post(
             "/v1/chat/completions",
@@ -271,45 +190,26 @@ async def test_fallback_retries_second_key_and_records_usage(tmp_path) -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["choices"][0]["message"]["content"] == "fallback ok"
-    assert FallbackProvider.calls == ["bad-key", "good-key"]
+    store = UsageStore(Settings(_env_file=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "test.sqlite3")))
+    store.init()
     usage = store.usage_summary(days=1)["items"]
-    assert sum(item["requests"] for item in usage) == 2
-    assert sum(item["errors"] for item in usage) == 1
-
-
-@pytest.mark.asyncio
-async def test_all_connections_unavailable_returns_provider_error(tmp_path) -> None:
-    settings = Settings(_env_file=None, KURUMI_PROXY_API_KEY=None, CODEBUDDY_API_KEY=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "locked.sqlite3"))
-    store = ConnectionStore(settings)
-    connection = store.create_connection(name="locked", api_key="locked-key", priority=1)
-    store.mark_failure(connection, model="gpt-5.5", error="quota exhausted", category="quota")
-    app.state.connection_store = store
-
-    async with client() as ac:
-        response = await ac.post(
-            "/v1/chat/completions",
-            json={"model": "gpt-5.5", "messages": [{"role": "user", "content": "hello"}]},
-        )
-
-    assert response.status_code == 503
-    assert response.json()["error"]["type"] == "provider_error"
+    assert len(usage) == 1
+    assert usage[0]["requests"] == 1
+    assert usage[0]["total_tokens"] >= 2
 
 
 @pytest.mark.asyncio
 async def test_admin_usage_and_quota(tmp_path) -> None:
-    store = ConnectionStore(Settings(_env_file=None, KURUMI_PROXY_API_KEY=None, CODEBUDDY_API_KEY=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "usage.sqlite3")))
-    connection = store.create_connection(name="primary", api_key="secret", priority=1)
+    store = UsageStore(Settings(_env_file=None, KURUMI_PROXY_DB_PATH=str(tmp_path / "usage.sqlite3")))
     store.record_usage(
         model="gpt-5.5",
-        connection=connection,
         endpoint="/v1/chat/completions",
         prompt_tokens=4,
         completion_tokens=2,
         total_tokens=6,
         status="success",
     )
-    app.state.connection_store = store
+    app.state.usage_store = store
 
     async with client() as ac:
         usage = await ac.get("/admin/usage?days=7")
@@ -318,5 +218,4 @@ async def test_admin_usage_and_quota(tmp_path) -> None:
     assert usage.status_code == 200
     assert usage.json()["items"][0]["total_tokens"] == 6
     assert quota.status_code == 200
-    assert quota.json()["credit_balance_known"] is False
     assert quota.json()["totals"]["all_time"]["total_tokens"] == 6

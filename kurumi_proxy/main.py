@@ -254,7 +254,9 @@ async def chat_completions(
 ) -> ChatCompletionResponse | StreamingResponse:
     processed_messages, rtk_stats = preprocess_messages(request.messages, settings)
     prompt_text = prompt_text_for_usage(processed_messages)
-    selected_model = request.model or settings.merlin_default_model
+    # Strip provider prefix if present (e.g. "merlin/claude-4.8-opus" → "claude-4.8-opus")
+    raw_model = request.model or settings.merlin_default_model
+    selected_model = raw_model.split("/", 1)[1] if "/" in raw_model else raw_model
     start = time.monotonic()
 
     try:

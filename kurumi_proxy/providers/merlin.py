@@ -82,12 +82,14 @@ _DEFAULT_UA = (
 
 
 def _now_iso() -> str:
-    """ISO-8601 timestamp with offset, matching Merlin's ``x-request-timestamp``.
+    """ISO-8601 timestamp matching Merlin's ``x-request-timestamp``.
 
-    The capture uses ``+07:00[Asia/Jakarta]``; we emit local-offset form which
-    the backend accepts.
+    The browser sends ``2026-06-20T23:35:07.828+00:00[UTC]`` — millisecond
+    precision with a ``[UTC]`` suffix.  The backend rejects other formats
+    with ``INTERNAL_SERVER_ERROR``.
     """
-    return datetime.now(timezone.utc).astimezone().isoformat()
+    now = datetime.now(timezone.utc)
+    return f"{now.strftime('%Y-%m-%dT%H:%M:%S')}.{now.microsecond // 1000:03d}+00:00[UTC]"
 
 
 class MerlinAuth:
@@ -413,11 +415,6 @@ class MerlinProvider(BaseProvider):
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self.settings.merlin_request_timeout_seconds,
-                headers={
-                    "User-Agent": _DEFAULT_UA,
-                    "Accept-Language": "en-US",
-                    "x-merlin-version": "web-merlin",
-                },
             )
         return self._client
 
@@ -476,13 +473,23 @@ class MerlinProvider(BaseProvider):
 
     def _chat_headers(self, id_token: str) -> dict:
         return {
-            "Authorization": f"Bearer {id_token}",
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
+            "authority": "www.getmerlin.in",
+            "accept": "text/event-stream, text/event-stream",
+            "accept-language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+            "authorization": f"Bearer {id_token}",
+            "content-type": "application/json",
+            "origin": "https://www.getmerlin.in",
+            "referer": "https://www.getmerlin.in/id/chat",
+            "sec-ch-ua": '"Chromium";v="137", "Not/A)Brand";v="24"',
+            "sec-ch-ua-mobile": "?1",
+            "sec-ch-ua-platform": '"Android"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
             "x-merlin-version": "web-merlin",
             "x-request-timestamp": _now_iso(),
-            "User-Agent": _DEFAULT_UA,
-            "Accept-Language": "en-US",
         }
 
     async def complete(
